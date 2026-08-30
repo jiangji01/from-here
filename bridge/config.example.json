@@ -1,0 +1,13 @@
+{
+  "port": 19428,
+  "queueSize": 5,
+  "ai": {
+    "provider": "auto",
+    "baseUrl": "",
+    "apiKey": "",
+    "model": "",
+    "modelMode": "follow-local",
+    "autoDiscover": true
+  },
+  "minQueueSize": 3
+}

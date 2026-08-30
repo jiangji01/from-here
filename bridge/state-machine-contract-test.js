@@ -1,0 +1,10 @@
+const assert=require('assert');
+const fs=require('fs');
+const path=require('path');
+const server=fs.readFileSync(path.join(__dirname,'server.js'),'utf8');
+assert(server.includes("url.pathname==='/api/session/keep'"),'missing server-owned keep-original signal dismissal');
+assert(server.includes("session.ignoredSignalKey"),'missing ignored signal key');
+assert(server.includes("playbackState?.stale&&session.currentTrack"),'stale playback must not rewind a newer Bridge-observed track');
+assert(server.includes("lastEndedAt"),'missing stable end-of-round state');
+assert(!server.includes("网易云召回，经过本轮边界重排"),'engineering recall reason leaked into runtime');
+console.log('✓ state machine contract: stale media protection + keep-original dismissal + stable round ending + human reasons');

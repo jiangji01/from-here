@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>From Here</title>
+  <link rel="stylesheet" href="sidepanel.css">
+</head>
+<body>
+<img id="ambientArt" class="ambient-art" alt="" aria-hidden="true">
+<div class="ambient-wash" aria-hidden="true"></div>
+<main class="app">
+  <header class="topbar">
+    <div class="brand" aria-label="From Here">
+      <span class="brand-mark" aria-hidden="true"><i></i><b></b></span>
+      <span>FROM HERE</span>
+    </div>
+    <button id="settingsToggle" class="icon-btn" type="button" aria-label="设置">···</button>
+  </header>
+
+  <section id="settings" class="settings hidden">
+    <div class="settings-head"><strong>设置</strong><button id="settingsClose" class="text-btn" type="button">完成</button></div>
+    <div class="setting-row"><span>音乐服务</span><b id="musicStatus">检测中</b></div>
+    <div class="setting-row"><span>AI</span><div><b id="aiModel">检测中</b><small id="aiMode"></small></div></div>
+    <p class="settings-note">默认跟随本机已有模型。只有你主动修改时，From Here 才会覆盖本机配置。</p>
+  </section>
+
+  <section class="hero">
+    <div class="cover-wrap">
+      <div id="coverFallback" class="cover-fallback">FH</div>
+      <img id="cover" alt="当前歌曲封面">
+    </div>
+    <div class="track-copy">
+      <span class="eyebrow">NOW PLAYING</span>
+      <h1 id="trackTitle">正在听…</h1>
+      <p id="trackArtist">读取当前音乐</p>
+      <small id="album"></small>
+    </div>
+  </section>
+
+  <section id="sessionNotice" class="session-notice hidden" aria-live="polite"><span class="notice-dot"></span><p id="sessionNoticeCopy">这一轮已结束。当前歌曲继续播放，From Here 不再补充后续。</p></section>
+
+  <section id="signalCard" class="signal-card hidden">
+    <span class="signal-origin"></span>
+    <div><strong>新的原点？</strong><p id="signalCopy"></p></div>
+    <div class="signal-actions"><button id="reanchor" class="signal-action" type="button">从这里出发</button><button id="keepWorld" class="text-btn" type="button">继续原来的</button></div>
+  </section>
+
+  <section id="startState" class="start-state">
+    <div class="section-intro"><span>FROM HERE</span><h2>从这里出发</h2></div>
+    <div class="distance-control">
+      <div class="path-slider">
+        <span class="path-origin" aria-hidden="true"></span>
+        <input id="radius" type="range" min="10" max="90" value="35" aria-label="想走多远">
+        <span class="path-horizon" aria-hidden="true"></span>
+      </div>
+      <div class="distance-labels"><span>留在这里</span><span>去看看</span></div>
+      <strong id="radiusWords">离这里不太远</strong>
+    </div>
+
+    <button id="instructionToggle" class="instruction-toggle" type="button">＋ 还有什么想告诉我？</button>
+    <div id="instructionWrap" class="instruction-wrap hidden">
+      <input id="instruction" class="line-input" placeholder="例如：更冷一点，不要华语，保持人声" autocomplete="off">
+      <small>只影响这一轮，不写入长期偏好。</small>
+    </div>
+
+    <button id="start" class="start-button" type="button"><span class="open-disc-mini" aria-hidden="true"></span><b>开始探索</b></button>
+  </section>
+
+  <section id="journey" class="journey hidden" aria-live="polite">
+    <div class="journey-mark"><span></span><i></i></div>
+    <div class="journey-copy">
+      <small>MAKING A PATH</small>
+      <strong id="journeyTitle">确认当前歌曲</strong>
+      <p id="journeyDetail">先确认这一刻的原点。</p>
+    </div>
+    <div class="progress-track"><i id="progressBar"></i></div>
+  </section>
+
+  <section id="session" class="session hidden">
+    <div class="session-head">
+      <div><small>FROM <span id="anchorName">这里</span></small><strong id="sessionDistance">离这里不太远</strong></div>
+      <button id="endSession" class="text-btn" type="button">结束这一轮</button>
+    </div>
+
+    <div class="route" id="routeView">
+      <div class="route-line" aria-hidden="true"></div>
+      <div id="routeAnchorStop" class="route-stop origin-stop">
+        <span class="route-node origin-node"></span>
+        <div class="route-copy"><small id="routeAnchorLabel">起点</small><strong id="routeAnchorTitle">—</strong><span id="routeAnchorArtist"></span></div>
+      </div>
+      <div id="routeCurrentStop" class="route-stop current-stop">
+        <span class="route-node current-node"><i></i></span>
+        <div class="route-copy">
+          <small id="routeCurrentLabel">你在这里</small>
+          <strong id="routeCurrentTitle">—</strong>
+          <span id="routeCurrentArtist"></span>
+          <div id="currentRelation" class="current-relation hidden"><p id="currentRelationText"></p></div>
+          <div class="micro-feedback"><button id="far" type="button">后面近一点</button><button id="good" type="button">多一点这个方向</button></div>
+        </div>
+      </div>
+      <div class="route-stop next-stop">
+        <span class="route-node next-node"></span>
+        <div class="route-copy next-copy">
+          <small>接下来 <span id="queueCount"></span></small>
+          <div id="nextTrack" class="next-track"></div>
+          <button id="moreToggle" class="more-toggle hidden" type="button"></button>
+          <div id="moreQueue" class="more-queue hidden"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div id="emptyState" class="empty-state hidden">先在网易云 Mac 客户端播放一首歌。</div>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+</main>
+<script src="sidepanel.js"></script>
+</body>
+</html>

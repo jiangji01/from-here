@@ -1,0 +1,23 @@
+# Local secrets / provider config
+bridge/config.local.json
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+
+# Runtime data
+bridge/.data/*
+!bridge/.data/.gitkeep
+bridge/track-cache.json
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+
+# Node
+node_modules/
+npm-debug.log*
+
+dist/

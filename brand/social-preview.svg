@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640">
+  <rect width="1280" height="640" fill="#1238C8"/>
+  <circle cx="1130" cy="120" r="250" fill="#F3F0E8" opacity=".055"/>
+  <g transform="translate(105 105)" fill="none" stroke="#F3F0E8" stroke-width="22" stroke-linecap="round">
+    <path d="M130 238 A108 108 0 1 1 130 54"/><path d="M142 146 H240"/>
+  </g>
+  <circle cx="183" cy="251" r="13" fill="#F3F0E8"/>
+  <text x="105" y="420" font-family="Helvetica, Arial, sans-serif" font-size="30" font-weight="700" letter-spacing="8" fill="#F3F0E8">FROM HERE</text>
+  <text x="105" y="485" font-family="Georgia, serif" font-size="47" fill="#F3F0E8">Start with what you're hearing.</text>
+  <text x="105" y="542" font-family="Georgia, serif" font-size="47" fill="#F3F0E8">Decide how far to go.</text>
+  <g transform="translate(865 345)">
+    <circle cx="0" cy="0" r="10" fill="#F3F0E8"/><line x1="16" y1="0" x2="230" y2="0" stroke="#F3F0E8" stroke-width="3" opacity=".85"/>
+    <circle cx="245" cy="0" r="7" fill="none" stroke="#F3F0E8" stroke-width="3" opacity=".65"/>
+  </g>
+</svg>
