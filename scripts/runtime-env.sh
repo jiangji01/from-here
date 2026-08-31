@@ -2,7 +2,9 @@
 # Runtime discovery for packaged From Here releases.
 # Official GitHub releases bundle architecture-specific Node + ncm-cli payloads,
 # so end users do not need Homebrew, Node, npm or a global ncm-cli.
-FH_RUNTIME_HOME="${FROM_HERE_RUNTIME_HOME:-$(cd "$(dirname "$0")/.." && pwd)}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+FH_RUNTIME_HOME="${FROM_HERE_RUNTIME_HOME:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+
 ARCH="$(uname -m 2>/dev/null || true)"
 case "$ARCH" in
   arm64|aarch64) FH_ARCH="arm64" ;;
