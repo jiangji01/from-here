@@ -62,9 +62,23 @@ chmod +x "$APP/Install.command" "$APP/Start.command" "$APP/Support/"*.command "$
 
 # Runtime package must never contain local secrets or runtime cache.
 if find "$APP" -type f \( -name 'config.local.json' -o -name '.env' -o -name '*.key' -o -name '*.pem' -o -name 'track-cache.json' -o -name 'media-state.json' \) | grep -q .; then echo 'Refusing release: secret/runtime file found.' >&2; exit 1; fi
-if grep -RIlE 'sk-[A-Za-z0-9]{10,}|BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY' "$APP" >/dev/null 2>&1; then echo 'Refusing release: possible private provider/secret material found.' >&2; exit 1; fi
+# Secret scanning is scoped to From Here-owned files. Bundled Node/ncm-cli are
+# third-party runtime payloads and may contain example strings that are not user secrets.
+OWNED_SCAN_PATHS=(
+  "$APP/Install.command" "$APP/Start.command" "$APP/README-FIRST.txt"
+  "$APP/Support" "$APP/Chrome Extension" "$APP/.from-here/bridge"
+  "$APP/.from-here/scripts" "$APP/.from-here/configure-ai.command" "$APP/.from-here/diagnose.command"
+)
+if grep -RIlE 'sk-[A-Za-z0-9]{10,}|BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY' "${OWNED_SCAN_PATHS[@]}" >/dev/null 2>&1; then echo 'Refusing release: possible private provider/secret material found.' >&2; exit 1; fi
 
 mkdir -p "$OUT_BASE"
-(cd "$OUT_BASE" && rm -f "$NAME.zip" && zip -qry "$NAME.zip" "$NAME")
+rm -f "$OUT_BASE/$NAME.zip"
+if command -v ditto >/dev/null 2>&1; then
+  # macOS official releases: preserve permissions and symlinks using the platform archiver.
+  (cd "$OUT_BASE" && ditto -c -k --sequesterRsrc --keepParent "$NAME" "$NAME.zip")
+else
+  # Developer/CI fallback outside macOS. Official Release CI assembles on macOS.
+  (cd "$OUT_BASE" && zip -qry "$NAME.zip" "$NAME")
+fi
 echo "$APP"
 echo "$OUT_BASE/$NAME.zip"

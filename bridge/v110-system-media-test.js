@@ -43,6 +43,11 @@ assert(workflow.includes('@music163/ncm-cli@${NCM_VERSION}'),'release CI must pi
 assert(workflow.includes('runtime-arm64') && workflow.includes('runtime-x64'),'release CI must build ncm-cli on both target macOS architectures');
 assert(workflow.includes('macos-15') && workflow.includes('macos-15-intel'),'release CI must smoke-test both Mac architectures');
 assert(workflow.includes('FROM_HERE_REQUIRE_BUNDLED_RUNTIME=1'),'official workflow must refuse partial runtime');
+assert(/build-universal:[\s\S]*?runs-on: macos-15/.test(workflow),'universal macOS package must be assembled on macOS');
+assert(workflow.includes('Hosted CI has no music app playing'),'CI must not require an actively playing track');
+assert(testRelease.includes('OWNED_SCAN_PATHS'),'release scans must separate From Here-owned code from bundled third-party runtime');
+assert(testRelease.includes('exact ZIP users will download'),'release test must validate the archived artifact, not only staging files');
+assert(builder.includes('ditto -c -k'),'macOS release builder should preserve platform archive semantics');
 
 assert(/1\.1\.0/.test(readme),'README must describe v1.1.0');
 assert(!/brew install nowplaying-cli|downloads the official `nowplaying-cli`|Homebrew Bottle into From Here/i.test(readme),'README must not tell end users to assemble media dependencies');
