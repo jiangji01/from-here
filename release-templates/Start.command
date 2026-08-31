@@ -1,12 +1,13 @@
 #!/bin/bash
 ROOT="$(cd "$(dirname "$0")" && pwd)"
+source "$ROOT/.from-here/scripts/runtime-env.sh"
 BRIDGE="$ROOT/.from-here/bridge"
 DATA="$BRIDGE/.data"
 PIDFILE="$DATA/bridge.pid"
 LOGFILE="$DATA/bridge.log"
 mkdir -p "$DATA"
-printf '\n● From Here 1.0.0\n\n'
-if ! command -v node >/dev/null 2>&1; then printf '✗ 未安装 Node.js。请先运行 Install.command。\n'; read -n 1 -s -r -p '按任意键关闭'; exit 1; fi
+printf '\n● From Here 1.1.0\n\n'
+if ! command -v node >/dev/null 2>&1; then printf '✗ From Here Runtime 不完整：找不到 Node.js。请重新下载当前 Release。\n'; read -n 1 -s -r -p '按任意键关闭'; exit 1; fi
 
 # Stop only a previously recorded From Here process.
 if [ -f "$PIDFILE" ]; then
@@ -23,7 +24,7 @@ if command -v lsof >/dev/null 2>&1; then
     if printf '%s' "$CMD" | grep -q "${BRIDGE}/server.js" || \
        printf '%s' "$CMD" | grep -Eq '/From-Here-v[^/]+-macOS/\.from-here/bridge/server\.js|/from-here-v[^/]+/bridge/server\.js' || \
        printf '%s' "$HEALTH" | grep -q '"app":"from-here"'; then
-      printf '○ 发现已有 From Here 正在运行，正在切换到 1.0.0…\n'
+      printf '○ 发现已有 From Here 正在运行，正在切换到 1.1.0…\n'
       kill "$PID" 2>/dev/null || true; sleep 0.6
     else
       printf '✗ 端口 19428 被其他程序占用：%s\n' "$CMD"

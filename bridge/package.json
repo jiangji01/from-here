@@ -1,12 +1,12 @@
 {
   "name": "from-here-bridge",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "description": "From Here — a session-aware music exploration layer that follows what you want right now.",
   "scripts": {
     "start": "node server.js",
     "mock": "MOCK_NCM=1 node server.js",
-    "test": "node provider-test.js && node prompt-test.js && node media-memory-test.js && node ui-contract-test.js && node state-machine-contract-test.js && node v093-regression-test.js && node v100-release-test.js && node test.js && node session-behavior-test.js && node autopilot-refill-test.js && node ai-session-test.js",
+    "test": "node provider-test.js && node prompt-test.js && node media-memory-test.js && node ui-contract-test.js && node state-machine-contract-test.js && node v093-regression-test.js && node v102-onboarding-test.js && node v110-system-media-test.js && node anchor-identity-regression-test.js && node listening-judgment-test.js && node test.js && node session-behavior-test.js && node autopilot-refill-test.js && node ai-session-test.js && node listening-judgment-ai-test.js",
     "test:session": "node test.js",
     "test:providers": "node provider-test.js",
     "test:prompt": "node prompt-test.js",

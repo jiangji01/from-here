@@ -1,44 +1,58 @@
-# Recommendation engine
+# Recommendation engine — Listening Judgment
 
-## Goal
+## North star
 
-Do not optimize for “most similar”. Optimize for **the most natural next step**.
+From Here does not optimize for “most similar”. It asks a harder question:
+
+> **Does this song deserve to be next?**
+
+A technically similar song can still be lazy, obvious or emotionally wrong. A slightly farther song can be the better next step when it carries forward the Anchor's tension, world, or unfinished expression.
 
 ## Pipeline
 
-1. Read current track from macOS Now Playing.
-2. Resolve it to a real NetEase song ID.
-3. Build an Anchor Music Fingerprint with AI when available.
-4. Generate 2–4 recall directions, not final song hallucinations.
-5. Recall real candidates through NetEase: same artist, Heartbeat, semantic searches, FM / Daily by distance.
-6. AI ranks real candidates using the Fingerprint and current Session instruction.
-7. Deterministic guards enforce diversity and prevent obvious transformation failures.
-8. Insert only a small next segment into the existing NetEase queue.
+1. Read the current track from macOS Now Playing.
+2. Resolve catalog identity when possible. Anchor identity does **not** depend on candidate playability.
+3. Build two complementary views:
+   - **Music Fingerprint** — vocal, texture, rhythm, dynamics, emotion, imagery, harmony, narrative;
+   - **Aesthetic Reading** — why the song stops you, its internal tension, human state, world, unfinished expression, lazy reductions to avoid, and legitimate surprise axes.
+4. Generate 2–4 recall directions. Explicit constraints rewrite recall space instead of merely filtering results afterward.
+5. Recall only real NetEase candidates.
+6. AI performs **Candidate Judgment**:
+   - continuity;
+   - meaningful difference;
+   - next-song worthiness;
+   - obviousness;
+   - cliché risk;
+   - surprise value;
+   - explicit world breaks.
+7. AI proposes a **Listening Arc** using roles:
+   - `hold` — prove we understood the Anchor;
+   - `deepen` — dig further into one tension;
+   - `open` — open another language / texture / scene with a bridge;
+   - `turn` — a stronger but explainable turn;
+   - `land` — settle or integrate the short journey.
+8. A deterministic Listening Judgment layer rejects low-worth / high-cliché candidates and composes the arc.
+9. Diversity, derivative, language, world-break and playback guards still apply.
+10. Only a short runway is inserted into the NetEase queue; refill continues the existing arc instead of restarting from the Anchor every time.
 
-## Anchor dimensions
+## Aesthetic constitution
 
-The prompt in [`bridge/prompts/music-semantic.js`](../bridge/prompts/music-semantic.js) explicitly considers:
+The model prompt and deterministic layer share these product principles:
 
-- Vocal Identity: gender/ensemble, timbre, register, true/falsetto/mixed/breathy voice, articulation, spatial distance, harmony;
-- Emotional Core;
-- Imagery & Atmosphere;
-- Rhythm & Motion;
-- Dynamics;
-- Instrumentation & Texture;
-- Melody & Harmony;
-- Narrative Feeling;
-- Must Preserve / Can Drift.
+- do not worship surface similarity;
+- emotional continuity and “world” matter more than genre labels;
+- a little risk is better than boring correctness, but surprise needs a bridge;
+- same-artist is a safety net, not the product value;
+- avoid cliché matching such as “sad → another sad song” or “rock → another rock song”;
+- respect internal tensions such as roughness vs tenderness or restraint vs release;
+- long-term taste is a weak tie-break; the present state wins;
+- optimize for a meaningful trajectory, not five isolated winners.
 
-## Dirty Paws regression
+## Hard constraints rewrite recall
 
-A bad candidate pool may contain multiple tracks by `Guitar Tribute Players`. Even if a catalog similarity system considers those tracks related to the original composition, a vocal, narrative indie-folk Anchor should not naturally turn into six instrumental tribute tracks.
+For example, with `回春丹 — 鲜花` + `不要华语`, From Here should **not** recall mostly Chinese neighbors and delete them afterward. It should preserve the Anchor's experiential skeleton and search directly in non-Chinese musical worlds.
 
-The engine therefore applies both:
-
-- model-level perceptual reasoning;
-- deterministic derivative / diversity guards.
-
-`npm test` contains this regression case.
+Chinese-language exclusion is based on actual/estimated singing language, not “contains CJK characters”, so Japanese titles containing kanji are not automatically rejected.
 
 ## Debugging recommendation quality
 
@@ -51,22 +65,33 @@ curl -s http://127.0.0.1:19428/api/session
 Inspect:
 
 - `analysis.summary`
+- `analysis.aesthetic`
 - `analysis.fingerprint`
 - `analysis.recallDirections`
 - `recall`
-- final `queue`
+- `queue[].journeyRole`
+- `queue[].aestheticJudgment`
+- `queue[].transitionLogic`
 
-This separates four kinds of failure:
+This separates five kinds of failure:
 
-1. Anchor understanding is wrong;
+1. Anchor listening / aesthetic reading is wrong;
 2. recall directions are wrong;
-3. NetEase candidate recall is weak;
-4. ranking / hard guards are wrong.
+3. catalog recall is weak;
+4. candidate judgment is wrong;
+5. the individual choices are fine but the trajectory is bad.
 
-## Perceptual continuity and world breaks (v0.6)
+## Regressions
 
-A recall source is not a distance metric. `heartbeat`, `fm`, `daily`, and semantic search only say **where a candidate came from**. They do not say how close it sounds to the Anchor.
+`npm test` includes:
 
-The AI ranker therefore evaluates candidate continuity across vocal identity, timbre, instrumentation/texture, rhythm/motion, dynamics, emotional core, and imagery/narrative. It returns a `perceptual_distance`, confidence and explicit `world_breaks`. At close exploration radii, a world break such as acoustic indie folk → four-on-the-floor EDM is rejected even if the songs share imagery or narrative associations.
-
-If an AI ranking succeeds, From Here will not refill continuity-filtered slots with unevaluated Heartbeat tracks. A shorter coherent queue is preferred to a longer but broken one.
+- Dirty Paws → tribute suppression;
+- Dirty Paws → near-radius EDM world-break rejection;
+- artist / album diversity;
+- feedback does not skip the current song;
+- continuous auto-refill;
+- clean system-media path;
+- metadata-only Anchor can still start a Session;
+- `不要华语` rewrites recall and does not misclassify Japanese CJK;
+- obvious same-artist / cliché candidates can be rejected even when the model ranks them high;
+- Listening Arc role composition.

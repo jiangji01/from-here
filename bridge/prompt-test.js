@@ -6,4 +6,8 @@ for(const token of ['Vocal Identity','真假音','Emotional Core','Imagery & Atm
 const r=buildRankingPrompt({anchor,radius:35,instruction:'保持人声',analysis:{fingerprint:{vocal_identity:['男女声','真声'],must_preserve:['有人声'],can_drift:['更暗']}},candidates:[{artist:'Fleet Foxes',title:'Mykonos',album:'',tags:['indie','folk'],source:'semantic-search',distance:28},{artist:'Klaas',title:'First Girl On The Moon',album:'',tags:['dance','edm'],source:'heartbeat',distance:50}],positiveArtists:[],negativeArtists:[]});
 for(const token of ['Continuity','Vocal Compatibility','instrumental cover','candidate_id','world_breaks','perceptual_distance','不要因为 source=heartbeat']) assert(r.includes(token),`missing rank ${token}`);
 assert(!r.includes('rough_distance'),'recall source distance must not leak into AI prompt');
+
+for(const token of ['为什么会让人停下来','tension','unspoken','avoid_reductions','surprise_axes']) assert(a.includes(token),`missing aesthetic ${token}`);
+for(const token of ['有没有资格成为下一首','Meaningful Difference','Obviousness','Cliché Risk','journey_role','sequence','Listening Arc']) assert(r.includes(token),`missing listening judgment ${token}`);
+
 console.log('✓ music semantic prompt: perceptual continuity + world-break + no fake recall distance');

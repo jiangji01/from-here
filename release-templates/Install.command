@@ -1,5 +1,6 @@
 #!/bin/bash
 ROOT="$(cd "$(dirname "$0")" && pwd)"
+source "$ROOT/.from-here/scripts/runtime-env.sh"
 export FROM_HERE_ROOT="$ROOT"
 export FROM_HERE_BRIDGE_DIR="$ROOT/.from-here/bridge"
 export FROM_HERE_EXTENSION_DIR="$ROOT/Chrome Extension"

@@ -1,0 +1,200 @@
+name: Build macOS Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  prepare-runtime:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: arm64
+            runner: macos-15
+            node_arch: arm64
+            node_sha256: 5ed4db0fcf1eaf84d91ad12462631d73bf4576c1377e192d222e48026a902640
+          - id: x64
+            runner: macos-15-intel
+            node_arch: x64
+            node_sha256: 5ea50c9d6dea3dfa3abb66b2656f7a4e1c8cef23432b558d45fb538c7b5dedce
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.22.0'
+
+      - name: Prepare target-native runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          NODE_VERSION=22.22.0
+          NCM_VERSION=0.1.7
+          STAGE="$PWD/.runtime-${{ matrix.id }}"
+          mkdir -p "$STAGE/node/bin" "$STAGE/ncm" "$STAGE/downloads" "$STAGE/extract"
+
+          NODE_FILE="node-v${NODE_VERSION}-darwin-${{ matrix.node_arch }}.tar.gz"
+          curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/${NODE_FILE}" -o "$STAGE/downloads/node.tar.gz"
+          echo "${{ matrix.node_sha256 }}  $STAGE/downloads/node.tar.gz" | shasum -a 256 -c -
+          tar -xzf "$STAGE/downloads/node.tar.gz" -C "$STAGE/extract" --strip-components=1
+          cp "$STAGE/extract/bin/node" "$STAGE/node/bin/node"
+          cp "$STAGE/extract/LICENSE" "$STAGE/node/LICENSE"
+          chmod +x "$STAGE/node/bin/node"
+
+          # Build the ncm dependency tree on the target macOS architecture.
+          # This prevents Linux-resolved/native transitive dependencies from leaking into macOS releases.
+          npm install --prefix "$STAGE/ncm" --omit=dev --ignore-scripts "@music163/ncm-cli@${NCM_VERSION}"
+          test -x "$STAGE/ncm/node_modules/.bin/ncm-cli"
+          "$STAGE/node/bin/node" "$STAGE/ncm/node_modules/@music163/ncm-cli/dist/index.js" --version >/dev/null 2>&1 || ncm-cli --version
+
+          tar -czf "runtime-${{ matrix.id }}.tar.gz" -C "$STAGE" node ncm
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: runtime-${{ matrix.id }}
+          path: runtime-${{ matrix.id }}.tar.gz
+          if-no-files-found: error
+
+  build-universal:
+    needs: prepare-runtime
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.22.0'
+
+      - name: Run deterministic tests
+        working-directory: bridge
+        run: npm test
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: runtime-arm64
+          path: .runtime-downloads/arm64
+      - uses: actions/download-artifact@v4
+        with:
+          name: runtime-x64
+          path: .runtime-downloads/x64
+
+      - name: Assemble target-native runtimes
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .runtime-stage/arm64 .runtime-stage/x64
+          tar -xzf .runtime-downloads/arm64/runtime-arm64.tar.gz -C .runtime-stage/arm64
+          tar -xzf .runtime-downloads/x64/runtime-x64.tar.gz -C .runtime-stage/x64
+          test -x .runtime-stage/arm64/node/bin/node
+          test -x .runtime-stage/x64/node/bin/node
+          test -x .runtime-stage/arm64/ncm/node_modules/.bin/ncm-cli
+          test -x .runtime-stage/x64/ncm/node_modules/.bin/ncm-cli
+
+      - name: Build universal macOS package
+        shell: bash
+        run: |
+          set -euo pipefail
+          export FROM_HERE_BUNDLED_NODE_ARM64_DIR="$PWD/.runtime-stage/arm64/node"
+          export FROM_HERE_BUNDLED_NODE_X64_DIR="$PWD/.runtime-stage/x64/node"
+          export FROM_HERE_BUNDLED_NCM_ARM64_DIR="$PWD/.runtime-stage/arm64/ncm"
+          export FROM_HERE_BUNDLED_NCM_X64_DIR="$PWD/.runtime-stage/x64/ncm"
+          export FROM_HERE_REQUIRE_BUNDLED_RUNTIME=1
+          ./scripts/build-release.sh dist
+          ./scripts/test-release.sh dist
+
+      - name: Create SHA256 checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd dist && shasum -a 256 From-Here-v*-macOS.zip > SHA256SUMS.txt)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: from-here-macos-universal
+          path: |
+            dist/From-Here-v*-macOS.zip
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+
+  smoke-macos:
+    needs: build-universal
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: from-here-macos-universal
+          path: artifact
+      - name: Unpack exact release artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          unzip -q artifact/From-Here-v*-macOS.zip -d unpacked
+          APP=$(find unpacked -maxdepth 1 -type d -name 'From-Here-v*-macOS' | head -1)
+          echo "APP=$APP" >> "$GITHUB_ENV"
+      - name: Verify bundled runtime + system media on real macOS
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = "${{ matrix.arch }}"
+          source "$APP/.from-here/scripts/runtime-env.sh"
+          test "${FROM_HERE_BUNDLED_RUNTIME:-}" = "1"
+          node -v
+          ncm-cli --version
+          MEDIA=$(/usr/bin/osascript -l JavaScript "$APP/.from-here/bridge/now-playing-jxa.js")
+          echo "$MEDIA"
+          echo "$MEDIA" | grep -q '"ok":true'
+      - name: Boot hidden Bridge with bundled runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          source "$APP/.from-here/scripts/runtime-env.sh"
+          PORT=19431 MOCK_NCM=1 node "$APP/.from-here/bridge/server.js" > bridge.log 2>&1 &
+          PID=$!
+          trap 'kill $PID 2>/dev/null || true' EXIT
+          for i in {1..20}; do
+            if curl -fsS http://127.0.0.1:19431/api/health >/dev/null; then exit 0; fi
+            sleep .25
+          done
+          cat bridge.log
+          exit 1
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: smoke-macos
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: from-here-macos-universal
+          path: artifact
+      - name: Publish tested Release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          NOTES="docs/RELEASE-v1.1.0.md"
+          if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
+              --title "From Here v1.1.0 — Listening Judgment" \
+              --notes-file "$NOTES" --latest
+          fi
+          gh release upload "$TAG" \
+            artifact/From-Here-v*-macOS.zip \
+            artifact/SHA256SUMS.txt \
+            --repo "$GITHUB_REPOSITORY" --clobber

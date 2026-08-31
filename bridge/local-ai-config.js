@@ -36,6 +36,9 @@ function scanObject(obj, found = {}, depth = 0) {
 }
 
 function discoverLocalAI() {
+  if (process.env.FROM_HERE_DISABLE_LOCAL_AI === '1') {
+    return { apiKey: '', baseUrl: '', model: '', provider: '', source: 'disabled-for-test' };
+  }
   const found = {
     apiKey: first(process.env.LL_AI_API_KEY, process.env.ANTHROPIC_AUTH_TOKEN, process.env.ANTHROPIC_API_KEY, process.env.OPENAI_API_KEY),
     baseUrl: first(process.env.LL_AI_BASE_URL, process.env.ANTHROPIC_BASE_URL, process.env.OPENAI_BASE_URL),

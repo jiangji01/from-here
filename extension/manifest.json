@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "From Here",
   "description": "从正在听的歌出发，决定想走多远。",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "permissions": [
     "storage",
     "sidePanel"
@@ -28,5 +28,6 @@
     "32": "icons/icon32.png",
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
-  }
+  },
+  "version_name": "1.1.0 · Listening Judgment"
 }

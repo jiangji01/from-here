@@ -1,5 +1,55 @@
 # Changelog
 
+## 1.1.0 — Listening Judgment + self-contained macOS runtime
+
+### Listening Judgment
+
+- Added **Aesthetic Reading**: why an Anchor stops you, internal tension, human state, world, unfinished expression, lazy reductions to avoid, and legitimate surprise axes.
+- Ranking now asks **“does this song deserve to be next?”**, not only how similar it is.
+- Added model outputs for next-song worthiness, meaningful difference, surprise, obviousness and cliché risk.
+- Added journey roles (`hold / deepen / open / turn / land`) and model-proposed sequence so a Session becomes a listening arc rather than five isolated winners.
+- Added a deterministic Listening Judgment gate + trajectory composer so a high raw AI score cannot force an obvious or aesthetically lazy first step.
+- Refill receives recent path context so a Session continues its arc rather than aesthetically restarting.
+- Same-artist results are strongly demoted at normal distance; semantic/aesthetic bridge recall is preferred.
+- Explicit constraints such as “不要华语” now reshape the recall space instead of merely filtering afterward.
+- Anchor identity is decoupled from NetEase candidate playability: a track already playing can remain the origin even if catalog ID enrichment fails.
+- Added regression tests for anti-obviousness, next-song worthiness, trajectory variety, constraint-aware recall and unresolved Anchor IDs.
+
+### Self-contained macOS runtime
+
+- Replaced the Homebrew/GHCR/`nowplaying-cli` installation chain with a JXA adapter executed by Apple’s `/usr/bin/osascript`; normal users no longer download a media helper at install time.
+- Current-track metadata comes from `MRNowPlayingRequest`; NetEase catalog lookup enriches catalog data asynchronously instead of defining playback truth.
+- Official GitHub Releases bundle pinned Apple Silicon + Intel Node.js runtimes and pinned local `@music163/ncm-cli`, so end users do not need Homebrew, Node, npm or a global ncm-cli.
+- Added release CI that verifies Node SHA-256 hashes, builds one universal macOS ZIP, then smoke-tests that exact artifact on both arm64 and Intel GitHub-hosted macOS runners before publication.
+- Removed the obsolete Bottle/GHCR installer and its regression surface entirely.
+- Keeps an independently installed `nowplaying-cli` only as an optional compatibility fallback if the system JXA path ever fails.
+
+## 1.0.3 — Clean-Mac installer fix
+
+- Fixed private Now Playing helper installation on macOS Bash 3.2 (`set -u` / optional bottle metadata).
+- Install verifies the media helper really exists before continuing.
+- Failed media setup stops onboarding immediately with a specific recovery message.
+- Recommendation, Session and UI behavior are unchanged.
+
+## 1.0.2 — NetEase onboarding clarity
+
+- Replaces the raw first-run `ncm-cli configure` prompt with a guided NetEase authorization flow.
+- Explains that NetEase desktop-app login and From Here / `ncm-cli` authorization are separate per-Mac states.
+- Opens NetEase's official developer onboarding guide and API-key application page for users who do not yet have an App ID / PrivateKey.
+- Lets users skip NetEase authorization during install and resume later from `Support/Connect NetEase.command`.
+- Side Panel settings now distinguish `网易云 · 待授权` from a broken local component.
+
+
+## 1.0.1 — Homebrew-free current-track setup
+
+- Removed Homebrew as a requirement for macOS current-track detection.
+- `Install.command` now downloads the official `nowplaying-cli` Homebrew Bottle directly into From Here’s private runtime directory when no system helper is available.
+- The installer does not write to `/usr/local` or `/opt/homebrew` and does not require administrator privileges for the media helper.
+- Bridge and diagnostics now prefer the private helper and fall back to an existing system `nowplaying-cli` when available.
+- Replaced the popup/Bridge `brew install nowplaying-cli` error with a product-level “rerun Install.command” recovery message.
+- Added third-party attribution and license notice for the upstream GPL-3.0-or-later helper.
+- No recommendation, Session or Path UI behavior changes.
+
 ## 1.0.0 — First public release
 
 - Promoted the stabilized v0.9.3 product into From Here's first public release.

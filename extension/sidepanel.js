@@ -48,7 +48,7 @@ function renderTrack(t){
 
 function renderSettings(){
   if(!health){els.musicStatus.textContent='未连接';els.aiModel.textContent='未检测';els.aiMode.textContent='';return;}
-  els.musicStatus.textContent=health.mock?'Mock':(health.ncm&&health.nowPlaying?'网易云 · 已连接':'需要检查');
+  els.musicStatus.textContent=health.mock?'Mock':(!health.ncm?'网易云 · 组件异常':(!health.ncmAuthorized?'网易云 · 待授权':(health.nowPlaying?'网易云 · 已连接':'网易云 · 已授权')));
   const ai=health.ai||{};
   if(ai.status==='ready'){
     els.aiModel.textContent=short(ai.model||'AI 已连接');

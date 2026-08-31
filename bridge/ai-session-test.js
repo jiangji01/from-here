@@ -3,16 +3,16 @@ const fs=require('fs');
 const path=require('path');
 const {spawn}=require('child_process');
 const assert=require('assert');
-const TEST_PORT=Number(process.env.TEST_PORT||19428);
-const CONFIG=path.join(__dirname,'config.local.json');
-const original=fs.existsSync(CONFIG)?fs.readFileSync(CONFIG):null;
+const {isolatedBridge}=require('./test-helpers');
 function sleep(ms){return new Promise(r=>setTimeout(r,ms));}
-function reqBridge(p,method='GET',data=null){return new Promise((resolve,reject)=>{const r=http.request({host:'127.0.0.1',port:TEST_PORT,path:p,method,headers:{'Content-Type':'application/json'}},res=>{let s='';res.on('data',d=>s+=d);res.on('end',()=>{try{resolve({status:res.statusCode,data:JSON.parse(s)})}catch(e){reject(e)}})});r.on('error',reject);if(data)r.write(JSON.stringify(data));r.end();});}
+let BRIDGE_PORT=0;
+function reqBridge(p,method='GET',data=null){return new Promise((resolve,reject)=>{const r=http.request({host:'127.0.0.1',port:BRIDGE_PORT,path:p,method,headers:{'Content-Type':'application/json'}},res=>{let s='';res.on('data',d=>s+=d);res.on('end',()=>{try{resolve({status:res.statusCode,data:JSON.parse(s)})}catch(e){reject(e)}})});r.on('error',reject);if(data)r.write(JSON.stringify(data));r.end();});}
 async function waitJob(job){for(let i=0;i<120;i++){const j=await reqBridge(`/api/jobs/${job.id}`);if(j.data.status==='done')return j.data;if(j.data.status==='error')throw new Error(j.data.error);await sleep(35);}throw new Error('job timeout');}
 function extractCandidates(prompt){const marker='下面是音乐平台返回的真实候选：';const a=prompt.indexOf(marker);if(a<0)return[];const rest=prompt.slice(a+marker.length);const b=rest.indexOf('\n\nRanking 原则：');if(b<0)return[];try{return JSON.parse(rest.slice(0,b).trim())}catch{return[]}}
 (async()=>{
-  let child,server;
+  let child,server,ctx;
   try{
+    ctx=isolatedBridge({},10); BRIDGE_PORT=ctx.port;
     server=http.createServer((req,res)=>{let body='';req.on('data',d=>body+=d);req.on('end',()=>{
       res.setHeader('Content-Type','application/json');
       if(req.url==='/v1/chat/completions'){
@@ -33,8 +33,8 @@ function extractCandidates(prompt){const marker='下面是音乐平台返回的�
       res.statusCode=404;res.end('{}');
     });});
     await new Promise(r=>server.listen(0,'127.0.0.1',r));const port=server.address().port;
-    fs.writeFileSync(CONFIG,JSON.stringify({port:TEST_PORT,queueSize:5,ai:{provider:'openai-compatible',baseUrl:`http://127.0.0.1:${port}/v1`,apiKey:'test-key',model:'test-model',modelMode:'custom',autoDiscover:false}},null,2));
-    child=spawn(process.execPath,['server.js'],{cwd:__dirname,env:{...process.env,PORT:String(TEST_PORT),MOCK_NCM:'1',MOCK_TRACK:'Dirty Paws'}});
+    fs.writeFileSync(ctx.configFile,JSON.stringify({port:ctx.port,queueSize:5,ai:{provider:'openai-compatible',baseUrl:`http://127.0.0.1:${port}/v1`,apiKey:'test-key',model:'test-model',modelMode:'custom',autoDiscover:false}},null,2));
+    child=spawn(process.execPath,['server.js'],{cwd:__dirname,env:{...ctx.env,MOCK_NCM:'1',MOCK_TRACK:'Dirty Paws'}});
     for(let i=0;i<30;i++){try{await reqBridge('/api/health');break}catch{await sleep(70)}}
     const p=await reqBridge('/api/session/start','POST',{radius:35,stateWords:'保持人声，不要纯音乐',excludes:''});
     assert.equal(p.status,202);
@@ -49,6 +49,6 @@ function extractCandidates(prompt){const marker='下面是音乐平台返回的�
     console.log('✓ AI Session: semantic fingerprint → recall → perceptual continuity → world-break guard');
   }finally{
     if(child)child.kill('SIGTERM');if(server)await new Promise(r=>server.close(r));
-    if(original)fs.writeFileSync(CONFIG,original);else try{fs.unlinkSync(CONFIG)}catch{}
+    if(ctx)ctx.cleanup();
   }
 })().catch(e=>{console.error(e);process.exitCode=1;});

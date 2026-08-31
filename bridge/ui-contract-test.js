@@ -12,7 +12,7 @@ for(const token of ['journey','progressBar','startState','routeAnchorTitle','rou
 for(const token of ['--blue:#1238c8','route-line','current-node','path-slider','ambient-art']) assert(css.includes(token),`Identity CSS missing ${token}`);
 assert(html.includes('后面近一点'),'new future-only feedback copy missing');
 assert(html.includes('多一点这个方向'),'new positive feedback copy missing');
-assert.equal(manifest.version,'1.0.0');
+assert.equal(manifest.version,require('./package.json').version);
 for(const n of [16,32,48,128]) assert(fs.statSync(path.join(root,'extension','icons',`icon${n}.png`)).size>200,`icon${n} invalid`);
 for(const f of ['github-hero.png','social-preview.png','demo.gif']) assert(fs.statSync(path.join(root,'brand',f)).size>500,`brand asset ${f} invalid`);
 assert(fs.statSync(path.join(root,'brand','mark.svg')).size>200,'brand mark invalid');

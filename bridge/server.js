@@ -8,10 +8,11 @@ const { profileFor } = require('./music-map');
 const { createProviderRuntime } = require('./providers');
 const { discoverLocalAI } = require('./local-ai-config');
 const { ANALYSIS_SYSTEM, RANK_SYSTEM, buildAnchorAnalysisPrompt, buildRankingPrompt } = require('./prompts/music-semantic');
+const { composeListeningArc, aestheticReject } = require('./listening-judgment');
 
 const MOCK = process.env.MOCK_NCM === '1';
 const ROOT = __dirname;
-const DATA_DIR = path.join(ROOT, '.data');
+const DATA_DIR = process.env.FROM_HERE_DATA_DIR || path.join(ROOT, '.data');
 fs.mkdirSync(DATA_DIR, { recursive: true });
 const CACHE_FILE = path.join(DATA_DIR, 'track-cache.json');
 const ANALYSIS_CACHE_FILE = path.join(DATA_DIR, 'anchor-analysis.json');
@@ -24,7 +25,7 @@ function loadJson(file, fallback = {}) {
   catch { return fallback; }
 }
 function loadConfig() {
-  const local = loadJson(path.join(ROOT, 'config.local.json'), {});
+  const local = loadJson(process.env.FROM_HERE_CONFIG_FILE || path.join(ROOT, 'config.local.json'), {});
   // v0.3.x used `llm`; keep it readable so existing local users can upgrade safely.
   const localAI = local.ai || local.llm || {};
   const explicitModel = process.env.LL_AI_MODEL || process.env.LLM_MODEL || '';
@@ -116,7 +117,8 @@ const mockCatalog = [
   ['周杰伦','晴天','mandopop nostalgic'], ['王菲','矜持','mandopop ethereal'], ['Of Monsters and Men','Dirty Paws','indie folk vocal anthemic narrative'], ['Of Monsters and Men','Little Talks','indie folk vocal'],
   ['Fleet Foxes','Mykonos','indie folk vocal harmony'], ['The Lumineers','Stubborn Love','indie folk vocal acoustic'], ['Edward Sharpe & The Magnetic Zeros','Home','indie folk vocal communal'],
   ['Guitar Tribute Players','Dirty Paws Tribute','tribute instrumental guitar cover'], ['Guitar Tribute Players','Little Talks Tribute','tribute instrumental guitar cover'], ['Guitar Tribute Players','Mountain Sound Tribute','tribute instrumental guitar cover'],
-  ['Novo Amor','Anchor','ambient folk vocal'], ['Massive Attack','Teardrop','trip-hop dark vocal'], ['Klaas','First Girl On The Moon','dance edm electronic four-on-the-floor vocal'], ['Björk','Jóga','art pop electronic vocal']
+  ['Novo Amor','Anchor','ambient folk vocal'], ['Massive Attack','Teardrop','trip-hop dark vocal'], ['Klaas','First Girl On The Moon','dance edm electronic four-on-the-floor vocal'], ['Björk','Jóga','art pop electronic vocal'],
+  ['回春丹','鲜花','c-pop rock vocal'], ['回春丹','艾蜜莉','c-pop rock vocal'], ['RADWIMPS','スパークル','j-rock melodic vocal'], ['The Killers','Read My Mind','indie rock melodic vocal'], ['Phoenix','Lisztomania','indie rock bright vocal']
 ].map((x,i)=>({
   title:x[1], artist:x[0], tags:x[2].split(' '), originalId:String(2000+i), encryptedId:(i+1).toString(16).padStart(32,'0'),
   visible:true, plLevel:'standard', freeTrailFlag:false, album:'Mock Album', coverUrl:'', source:'mock'
@@ -132,10 +134,56 @@ function cors(res) {
 function json(res,status,data){ cors(res); res.writeHead(status,{'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify(data)); }
 function body(req){ return new Promise((resolve,reject)=>{ let s=''; req.on('data',d=>{s+=d;if(s.length>1e6)req.destroy();}); req.on('end',()=>{if(!s)return resolve({});try{resolve(JSON.parse(s));}catch{reject(new Error('请求 JSON 无法解析'));}}); req.on('error',reject);});}
 function looseParse(text){ const s=String(text||'').trim(); if(!s)return null; try{return JSON.parse(s);}catch{}; for(const [a,b] of [['{','}'],['[',']']]){const i=s.indexOf(a),j=s.lastIndexOf(b);if(i>=0&&j>i){try{return JSON.parse(s.slice(i,j+1));}catch{}}} return {raw:s}; }
-function run(command,args,timeoutMs=12000){ return new Promise((resolve,reject)=>{ const child=spawn(command,args,{shell:false,env:process.env}); let out='',err=''; const timer=setTimeout(()=>{child.kill('SIGTERM');reject(new Error(`${command} 超时：${args.join(' ')}`));},timeoutMs); child.stdout.on('data',d=>out+=d); child.stderr.on('data',d=>err+=d); child.on('error',e=>{clearTimeout(timer);reject(e);}); child.on('close',code=>{clearTimeout(timer); if(code!==0)return reject(new Error(String(err||out||`${command} exited ${code}`).trim())); resolve({stdout:String(out).trim(),stderr:String(err).trim(),parsed:looseParse(out)});}); }); }
+function stripAnsi(text){return String(text||'').replace(/\x1B\[[0-?]*[ -\/]*[@-~]/g,'');}
+function extractJsonChunks(text){
+  const s=stripAnsi(text); const out=[]; let start=-1,depth=0,quote='',esc=false;
+  for(let i=0;i<s.length;i++){const ch=s[i];
+    if(start<0){if(ch==='{'||ch==='['){start=i;depth=1;quote='';esc=false;}continue;}
+    if(quote){if(esc){esc=false;continue;}if(ch==='\\'){esc=true;continue;}if(ch===quote)quote='';continue;}
+    if(ch==='"'||ch==="'"){quote=ch;continue;}
+    if(ch==='{'||ch==='[')depth++; else if(ch==='}'||ch===']')depth--;
+    if(depth===0){const chunk=s.slice(start,i+1);try{out.push(JSON.parse(chunk));}catch{}start=-1;}
+  }
+  return out;
+}
+function parseCliOutput(stdout,stderr=''){
+  const direct=looseParse(stdout);
+  if(direct && !(direct.raw && typeof direct.raw==='string'))return direct;
+  const chunks=extractJsonChunks(stdout);
+  if(chunks.length===1)return chunks[0];
+  if(chunks.length>1)return {chunks};
+  const errChunks=extractJsonChunks(stderr);
+  if(errChunks.length===1)return errChunks[0];
+  if(errChunks.length>1)return {chunks:errChunks};
+  return direct;
+}
+function run(command,args,timeoutMs=12000){ return new Promise((resolve,reject)=>{ const child=spawn(command,args,{shell:false,env:process.env}); let out='',err=''; const timer=setTimeout(()=>{child.kill('SIGTERM');reject(new Error(`${command} 超时：${args.join(' ')}`));},timeoutMs); child.stdout.on('data',d=>out+=d); child.stderr.on('data',d=>err+=d); child.on('error',e=>{clearTimeout(timer);reject(e);}); child.on('close',code=>{clearTimeout(timer); if(code!==0)return reject(new Error(String(err||out||`${command} exited ${code}`).trim())); resolve({stdout:String(out).trim(),stderr:String(err).trim(),parsed:parseCliOutput(out,err)});}); }); }
 function valueAfter(args,key){ const i=args.indexOf(key); return i>=0?args[i+1]:null; }
 
-async function runNcm(args, timeout=15000){ if(MOCK)return mockNcm(args); return run('ncm-cli',args,timeout); }
+const JXA_NOWPLAYING_SCRIPT = path.resolve(ROOT, 'now-playing-jxa.js');
+function legacyNowPlayingCommand(){
+  if(process.env.FROM_HERE_NOWPLAYING_BIN) return process.env.FROM_HERE_NOWPLAYING_BIN;
+  return 'nowplaying-cli';
+}
+function runLegacyNow(args, timeout=5000){ return run(legacyNowPlayingCommand(), args, timeout); }
+function parseJxaPayload(raw){
+  let parsed=looseParse(raw);
+  if(typeof parsed==='string') parsed=looseParse(parsed);
+  if(!parsed||typeof parsed!=='object') throw new Error('macOS system media response could not be parsed');
+  if(parsed.ok===false) throw new Error(parsed.error||'macOS system media interface unavailable');
+  return parsed;
+}
+async function runSystemNowPlaying(timeout=4500){
+  if(process.env.FROM_HERE_NOWPLAYING_JSON){
+    return parseJxaPayload(process.env.FROM_HERE_NOWPLAYING_JSON);
+  }
+  if(process.platform!=='darwin') throw new Error('macOS system media interface is only available on macOS');
+  if(!fs.existsSync(JXA_NOWPLAYING_SCRIPT)) throw new Error('From Here system media script is missing');
+  const r=await run('/usr/bin/osascript',['-l','JavaScript',JXA_NOWPLAYING_SCRIPT],timeout);
+  return parseJxaPayload(r.stdout);
+}
+
+async function runNcm(args, timeout=15000){ if(MOCK)return mockNcm(args); return run(process.env.FROM_HERE_NCM_BIN||'ncm-cli',args,timeout); }
 function mockNcm(args){
   const cmd=args.join(' ');
   if(args[0]==='--version') return Promise.resolve({stdout:'0.1.mock',parsed:{}});
@@ -144,7 +192,11 @@ function mockNcm(args){
   if(args[0]==='song'&&args[1]==='lyric') return Promise.resolve({stdout:JSON.stringify({lrc:{lyric:'[00:00.00]夜色里的一段故事\n[00:10.00]克制、靠近又撤退'}}),parsed:{lrc:{lyric:'[00:00.00]夜色里的一段故事\n[00:10.00]克制、靠近又撤退'}}});
   if(args[0]==='search'&&args[1]==='song'){
     const q=String(valueAfter(args,'--keyword')||'').toLowerCase();
-    const toks=q.split(/\s+/).filter(Boolean); const found=mockCatalog.filter(t=>toks.every(k=>(`${t.artist} ${t.title}`).toLowerCase().includes(k))||toks.some(k=>(`${t.artist} ${t.title}`).toLowerCase().includes(k))).slice(0,12);
+    const toks=q.split(/\s+/).filter(Boolean); let found=mockCatalog.filter(t=>toks.every(k=>(`${t.artist} ${t.title}`).toLowerCase().includes(k))||toks.some(k=>(`${t.artist} ${t.title}`).toLowerCase().includes(k))).slice(0,12);
+    if(process.env.MOCK_ANCHOR_UNPLAYABLE==='1'){
+      const target=String(process.env.MOCK_TRACK||'').toLowerCase();
+      found=found.map(t=>String(t.title).toLowerCase()===target?{...t,visible:false,plLevel:'none'}:t);
+    }
     return Promise.resolve({stdout:JSON.stringify({songs:found.length?found:mockCatalog.slice(0,8)}),parsed:{songs:found.length?found:mockCatalog.slice(0,8)}});
   }
   if(args[0]==='recommend'&&args[1]==='heartbeat'){
@@ -214,8 +266,8 @@ function cleanNowValue(v){
   if(!s||/^(null|nil|undefined|none|n\/a)$/i.test(s))return '';
   return s;
 }
-async function nowProp(prop,timeout=4500){
-  const r=await run('nowplaying-cli',['get',prop],timeout);
+async function legacyNowProp(prop,timeout=4500){
+  const r=await runLegacyNow(['get',prop],timeout);
   let s=String(r.stdout||'').trim();
   try{
     const p=JSON.parse(s);
@@ -225,34 +277,48 @@ async function nowProp(prop,timeout=4500){
   s=s.replace(new RegExp(`^${prop}\\s*[:=]\\s*`,'i'),'');
   return cleanNowValue(s);
 }
-async function nowSnapshot(){
-  // One MediaRemote read keeps title/artist/timing from the same snapshot. Timing
-  // lets the Session understand normal playback without asking the user to rate
-  // every song.
+async function legacyNowSnapshot(){
   try{
-    const r=await run('nowplaying-cli',['get','title','artist','album','duration','elapsedTime','playbackRate','uniqueIdentifier'],5000);
+    const r=await runLegacyNow(['get','title','artist','album','duration','elapsedTime','playbackRate','uniqueIdentifier'],5000);
     const lines=String(r.stdout||'').split(/\r?\n/).map(cleanNowValue);
     return {
       title:lines[0]||'', artist:lines[1]||'', album:lines[2]||'',
       duration:Number(lines[3])||0, elapsedTime:Number(lines[4])||0,
-      playbackRate:Number(lines[5])||0, uniqueIdentifier:lines[6]||''
+      playbackRate:Number(lines[5])||0, uniqueIdentifier:lines[6]||'', detector:'nowplaying-cli-fallback'
     };
   }catch{
     const [title,artist,album,duration,elapsedTime,playbackRate,uniqueIdentifier]=await Promise.all([
-      nowProp('title'),nowProp('artist'),nowProp('album').catch(()=>''),nowProp('duration').catch(()=>''),
-      nowProp('elapsedTime').catch(()=>''),nowProp('playbackRate').catch(()=>''),nowProp('uniqueIdentifier').catch(()=>''),
+      legacyNowProp('title'),legacyNowProp('artist'),legacyNowProp('album').catch(()=>''),legacyNowProp('duration').catch(()=>''),
+      legacyNowProp('elapsedTime').catch(()=>''),legacyNowProp('playbackRate').catch(()=>''),legacyNowProp('uniqueIdentifier').catch(()=>''),
     ]);
-    return {title,artist,album,duration:Number(duration)||0,elapsedTime:Number(elapsedTime)||0,playbackRate:Number(playbackRate)||0,uniqueIdentifier};
+    return {title,artist,album,duration:Number(duration)||0,elapsedTime:Number(elapsedTime)||0,playbackRate:Number(playbackRate)||0,uniqueIdentifier,detector:'nowplaying-cli-fallback'};
   }
 }
-let artworkFetchSeq=0;
-function hydrateArtworkAsync(trackKey){
-  const seq=++artworkFetchSeq;
-  Promise.all([nowProp('artworkMIMEType').catch(()=>''),nowProp('artworkData',7000).catch(()=>'')]).then(([mime,art])=>{
-    if(seq!==artworkFetchSeq||nowCache.key!==trackKey)return;
-    nowCache.artworkMime=mime||'image/jpeg'; nowCache.artwork=art&&art.length>100?art:'';
+async function nowSnapshot(){
+  let systemError='';
+  try{
+    const payload=await runSystemNowPlaying(4500);
+    const t=payload.track||{};
+    return {
+      title:cleanNowValue(t.title), artist:cleanNowValue(t.artist), album:cleanNowValue(t.album),
+      duration:Number(t.duration)||0, elapsedTime:Number(t.elapsedTime)||0,
+      playbackRate:Number(t.playbackRate)||0, uniqueIdentifier:cleanNowValue(t.uniqueIdentifier),
+      detector:String(payload.detector||'system-jxa'), appName:cleanNowValue(payload.appName)
+    };
+  }catch(e){ systemError=e.message; }
+  try{ return await legacyNowSnapshot(); }
+  catch(e){ throw new Error(`macOS 系统媒体接口不可用${systemError?`（${systemError}）`:''}${e?.message?`；兼容回退也不可用（${e.message}）`:''}`); }
+}
+let catalogHydrateSeq=0;
+function hydrateCatalogAsync(trackKey,baseTrack){
+  const seq=++catalogHydrateSeq;
+  const cached=trackCache[trackKey]||{};
+  if(cached.coverUrl&&cached.originalId&&cached.encryptedId)return;
+  searchExact(baseTrack).then(full=>{
+    if(seq!==catalogHydrateSeq||nowCache.key!==trackKey)return;
+    const latest=trackCache[trackKey]||full||{};
     if(nowCache.state?.track&&keyFor(nowCache.state.track)===trackKey){
-      nowCache.state={...nowCache.state,track:{...nowCache.state.track,artworkData:nowCache.artwork,artworkMime:nowCache.artworkMime}};
+      nowCache.state={...nowCache.state,track:{...nowCache.state.track,...latest,title:nowCache.state.track.title,artist:nowCache.state.track.artist}};
     }
   }).catch(()=>{});
 }
@@ -261,15 +327,15 @@ async function currentState({ force=false }={}){
   if(MOCK){ const t=mockState.queue[mockState.index]||mockCatalog[0]; return {connected:true,mock:true,detector:'mock',track:{...t,artworkData:''},freshness:'fresh'}; }
   const now=Date.now();
   if(!force && now-nowCache.polledAt<1100 && nowCache.state)return nowCache.state;
-  let title='',artist='',album='',duration=0,elapsedTime=0,playbackRate=0,uniqueIdentifier='';
-  try{ ({title,artist,album,duration,elapsedTime,playbackRate,uniqueIdentifier}=await nowSnapshot()); }
+  let title='',artist='',album='',duration=0,elapsedTime=0,playbackRate=0,uniqueIdentifier='',detector='system-jxa';
+  try{ ({title,artist,album,duration,elapsedTime,playbackRate,uniqueIdentifier,detector}=await nowSnapshot()); }
   catch(e){
     const fallback=mediaMemory.fallback(now);
     if(fallback.track){
-      const state={connected:true,mock:false,detector:'mac-now-playing',track:fallback.track,stale:true,freshness:'last-good',warning:'macOS Now Playing 暂时不可用，继续使用上一条已确认媒体。'};
+      const state={connected:true,mock:false,detector:detector||'system-jxa',track:fallback.track,stale:true,freshness:'last-good',warning:'macOS Now Playing 暂时不可用，继续使用上一条已确认媒体。'};
       nowCache.state=state; nowCache.polledAt=now; return state;
     }
-    return {connected:true,mock:false,detector:'unavailable',track:null,error:/ENOENT|spawn nowplaying-cli/i.test(e.message)?'请先执行 brew install nowplaying-cli':e.message};
+    return {connected:true,mock:false,detector:'unavailable',track:null,error:'macOS 系统媒体接口当前不可用。请运行 Support/Diagnose.command 查看详情。',detail:e.message};
   }
   if(!title||!artist){
     // MediaRemote can return an empty snapshot for minutes after a Side Panel
@@ -278,42 +344,62 @@ async function currentState({ force=false }={}){
     // not erase the user's current musical context.
     const fallback=mediaMemory.fallback(now);
     if(fallback.track){
-      const state={connected:true,mock:false,detector:'mac-now-playing',track:fallback.track,stale:true,freshness:'last-good',warning:'macOS Now Playing 暂未返回完整字段，继续显示上一条已确认媒体。'};
+      const state={connected:true,mock:false,detector:detector||'system-jxa',track:fallback.track,stale:true,freshness:'last-good',warning:'macOS Now Playing 暂未返回完整字段，继续显示上一条已确认媒体。'};
       nowCache.state=state; nowCache.polledAt=now; return state;
     }
-    const state={connected:true,mock:false,detector:'mac-now-playing',track:null,stale:true,freshness:'none',error:`macOS 当前媒体信息不完整（title=${title||'∅'}, artist=${artist||'∅'}）。请确保网易云 Mac 客户端正在播放音乐。`};
+    const state={connected:true,mock:false,detector:detector||'system-jxa',track:null,stale:true,freshness:'none',error:`macOS 当前媒体信息不完整（title=${title||'∅'}, artist=${artist||'∅'}）。请确保网易云 Mac 客户端正在播放音乐。`};
     nowCache.state=state; nowCache.polledAt=now; return state;
   }
   const k=`${artist.toLowerCase()}::${title.toLowerCase()}`;
   if(k!==nowCache.key){
     nowCache.key=k; nowCache.artwork=''; nowCache.album=album||'';
-    // Artwork can take several seconds from MediaRemote. Never block playback
-    // truth or Session rendering on decorative image data.
-    hydrateArtworkAsync(k);
+    // The system JXA adapter deliberately avoids binary/private helper assets.
+    // Enrich artwork/catalog IDs asynchronously from NetEase instead of blocking playback truth.
+    hydrateCatalogAsync(k,{title,artist,album});
   } else if(album) nowCache.album=album;
   const cached=trackCache[k]||{};
-  const track={title,artist,album:nowCache.album||cached.album||'',coverUrl:cached.coverUrl||'',artworkData:nowCache.artwork||'',artworkMime:nowCache.artworkMime||'image/jpeg',originalId:cached.originalId||'',encryptedId:cached.encryptedId||'',visible:true,plLevel:cached.plLevel||'',freeTrailFlag:false,tags:cached.tags||[],duration,elapsedTime,playbackRate,uniqueIdentifier};
+  const track={title,artist,album:nowCache.album||cached.album||'',coverUrl:cached.coverUrl||'',artworkData:nowCache.artwork||'',artworkMime:nowCache.artworkMime||'image/jpeg',originalId:cached.originalId||'',encryptedId:cached.encryptedId||'',visible:true,plLevel:cached.plLevel||'',freeTrailFlag:false,tags:cached.tags||[],duration,elapsedTime,playbackRate,uniqueIdentifier,catalogResolved:Boolean(cached.originalId||cached.encryptedId),catalogPlayable:cached.catalogPlayable===true};
   mediaMemory.accept(track,now);
-  const state={connected:true,mock:false,detector:'mac-now-playing',track,stale:false,freshness:'fresh'};
+  const state={connected:true,mock:false,detector:detector||'system-jxa',track,stale:false,freshness:'fresh'};
   nowCache.state=state; nowCache.polledAt=now; return state;
 }
 
+function canonMatchText(value){
+  return String(value||'').normalize('NFKC').toLowerCase()
+    .replace(/[“”‘’"'`·・•]/g,'')
+    .replace(/[，、,。.!！？?：:；;（）()\[\]【】《》<>—–_\/\\|+-]+/g,' ')
+    .replace(/\s+/g,' ').trim();
+}
 async function searchExact(track){
-  const k=keyFor(track); const cached=trackCache[k]; if(cached?.encryptedId&&cached?.originalId)return {...track,...cached};
-  const a=track.artist.toLowerCase(),t=track.title.toLowerCase();
-  function score(x){let s=0;const xa=x.artist.toLowerCase(),xt=x.title.toLowerCase();if(xa===a)s+=10;else if(xa.includes(a)||a.includes(xa))s+=6;if(xt===t)s+=12;else if(xt.includes(t)||t.includes(xt))s+=7;return s;}
+  const k=keyFor(track); const cached=trackCache[k];
+  if(cached?.encryptedId||cached?.originalId)return {...track,...cached,catalogResolved:true,catalogPlayable:isPlayable(cached)};
+  const a=canonMatchText(track.artist),t=canonMatchText(track.title),al=canonMatchText(track.album);
+  function score(x){
+    let s=0; const xa=canonMatchText(x.artist),xt=canonMatchText(x.title),xal=canonMatchText(x.album);
+    if(xa===a)s+=12;else if(xa&&a&&(xa.includes(a)||a.includes(xa)))s+=8;
+    if(xt===t)s+=16;else if(xt&&t&&(xt.includes(t)||t.includes(xt)))s+=10;
+    if(al&&xal){if(xal===al)s+=4;else if(xal.includes(al)||al.includes(xal))s+=2;}
+    return s;
+  }
   const queries=[`${track.artist} ${track.title}`,`${track.title} ${track.artist}`,track.title];
   let best=null,bestScore=-1,lastError='';
   for(const q of queries){
     try{
       const r=await runNcm(['search','song','--keyword',q,'--userInput',`识别当前歌曲 ${track.artist} ${track.title}`],15000);
-      const tracks=dedupe(collect(r.parsed,normalizeTrack).filter(isPlayable));
+      // Anchor identity and candidate playability are different concerns. The song
+      // is already playing in the desktop app, so an Open Platform visibility or
+      // plLevel flag must never block the Session from starting.
+      const tracks=dedupe(collect(r.parsed,normalizeTrack).filter(Boolean));
       for(const x of tracks){const sc=score(x);if(sc>bestScore){best=x;bestScore=sc;}}
-      if(best&&bestScore>=16)break;
+      if(best&&bestScore>=24)break;
     }catch(e){lastError=e.message;}
   }
-  if(!best||bestScore<8)throw new Error(`macOS 已读到：${track.artist} — ${track.title}；但网易云搜索未匹配到可播放歌曲${lastError?`（${lastError}）`:''}`);
-  trackCache[k]=best; saveCache(); return {...track,...best};
+  if(!best||bestScore<10){
+    console.warn(`[anchor catalog] metadata-only anchor: ${track.artist} — ${track.title}${lastError?` (${lastError})`:''}`);
+    return {...track,catalogResolved:false,catalogPlayable:false};
+  }
+  const resolved={...best,catalogResolved:true,catalogPlayable:isPlayable(best)};
+  trackCache[k]=resolved; saveCache(); return {...track,...resolved};
 }
 
 function encryptedPlaylistId(parsed){
@@ -396,16 +482,18 @@ function normalizeAnalysis(raw,anchor){
   const recallDirections=dirs.slice(0,4).map((d,i)=>({
     name:String(d?.name||`方向 ${i+1}`),
     reason:String(d?.reason||''),
+    aestheticBridge:String(d?.aesthetic_bridge||d?.aestheticBridge||''),
     preserve:arr(d?.preserve,6),
     drift:arr(d?.drift,6),
     searchArtists:arr(d?.search_artists||d?.searchArtists,6),
-    searchKeywords:arr(d?.search_keywords||d?.searchKeywords,6)
+    searchKeywords:arr(d?.search_keywords||d?.searchKeywords,6),
+    targetLanguage:String(d?.target_language||d?.targetLanguage||'unknown').toLowerCase()
   })).filter(d=>d.searchArtists.length||d.searchKeywords.length);
   // Migration from v0.4.1's simpler `searches` format.
   if(!recallDirections.length && Array.isArray(obj.searches)){
     for(const [i,q] of obj.searches.slice(0,4).entries()){
       const keyword=typeof q==='string'?q:String(q?.keyword||'');
-      if(keyword)recallDirections.push({name:`方向 ${i+1}`,reason:String(q?.reason||''),preserve:[],drift:[],searchArtists:[keyword],searchKeywords:[]});
+      if(keyword)recallDirections.push({name:`方向 ${i+1}`,reason:String(q?.reason||''),preserve:[],drift:[],searchArtists:[keyword],searchKeywords:[],targetLanguage:'unknown'});
     }
   }
   const fingerprint={
@@ -420,8 +508,26 @@ function normalizeAnalysis(raw,anchor){
     must_preserve:arr(fp.must_preserve || legacy.invariants,6),
     can_drift:arr(fp.can_drift,8)
   };
+  const langRaw=obj.anchor_language||obj.anchorLanguage||{};
+  const anchorLanguage={
+    code:String(langRaw?.code||langRaw?.language||'unknown').toLowerCase(),
+    confidence:String(langRaw?.confidence||'low').toLowerCase(),
+    reason:String(langRaw?.reason||'')
+  };
+  const aesRaw=obj.aesthetic&&typeof obj.aesthetic==='object'?obj.aesthetic:{};
+  const aesthetic={
+    why_it_stops_you:String(aesRaw.why_it_stops_you||aesRaw.whyItStopsYou||''),
+    human_state:arr(aesRaw.human_state||aesRaw.humanState,6),
+    tension:arr(aesRaw.tension,6),
+    world:String(aesRaw.world||''),
+    unspoken:String(aesRaw.unspoken||''),
+    avoid_reductions:arr(aesRaw.avoid_reductions||aesRaw.avoidReductions,6),
+    surprise_axes:arr(aesRaw.surprise_axes||aesRaw.surpriseAxes,6)
+  };
   return {
     summary:String(obj.summary||`${anchor.artist} — ${anchor.title}`),
+    anchorLanguage,
+    aesthetic,
     fingerprint,
     recallDirections,
     avoidTransforms:arr(obj.avoid_transforms||obj.avoidTransforms,8).length?arr(obj.avoid_transforms||obj.avoidTransforms,8):['tribute','karaoke','instrumental reinterpretation']
@@ -440,7 +546,7 @@ function recallQueries(analysis,radius,maxOverride=null){
     for(const term of terms){
       const keyword=String(term||'').trim(); if(!keyword)continue;
       const key=keyword.toLowerCase(); if(seen.has(key))continue;
-      seen.add(key); out.push({keyword,reason:d.reason||d.name||''});
+      seen.add(key); out.push({keyword,reason:[d.aestheticBridge,d.reason,d.name].filter(Boolean).join('；')});
       if(out.length>=max)return out;
     }
   }
@@ -448,7 +554,7 @@ function recallQueries(analysis,radius,maxOverride=null){
 }
 async function analyzeAnchor(anchor,radius=35,instruction='',force=false){
   const bucket=radius<=25?'near':radius<=65?'mid':'far';
-  const contextKey=`v2::${keyFor(anchor)}::${bucket}::${String(instruction||'').toLowerCase().trim()}`;
+  const contextKey=`v3-listening-judgment::${keyFor(anchor)}::${bucket}::${String(instruction||'').toLowerCase().trim()}`;
   if(!force&&analysisCache[contextKey])return analysisCache[contextKey];
   if(!config.ai.apiKey){
     const fallback=normalizeAnalysis({
@@ -498,13 +604,15 @@ async function recallHeartbeat(anchor){
 async function recallFm(){ const r=await runNcm(['recommend','fm','--userInput','为当前听歌 Session 补充少量更远候选'],16000); return tracksFrom(r.parsed,'fm',62); }
 async function recallDaily(){ const r=await runNcm(['recommend','daily','--userInput','为高探索半径补充少量意外候选'],16000); return tracksFrom(r.parsed,'daily',78); }
 
-async function recallPool(anchor,radius,analysis){
-  // Semantic directions come before Heartbeat in the candidate list. Heartbeat
-  // is useful recall, but it must not crowd out AI-planned neighbours.
-  const jobs=[['sameArtist',()=>recallSameArtist(anchor)]];
+async function recallPool(anchor,radius,analysis,constraints={excludedLanguages:[]}){
+  // Recall breadth and perceptual radius are different controls. A hard user
+  // constraint may require looking in a broader catalog region while the final
+  // ranking still enforces the same perceptual radius.
+  const jobs=[];
+  if(!sameArtistConflictsWithConstraints(anchor,analysis,constraints))jobs.push(['sameArtist',()=>recallSameArtist(anchor)]);
   if(recallQueries(analysis,radius).length)jobs.push(['semantic',()=>recallSemantic(analysis,radius)]);
-  jobs.push(['heartbeat',()=>recallHeartbeat(anchor)]);
-  if(radius>=52)jobs.push(['fm',()=>recallFm()]);
+  if(anchor.encryptedId)jobs.push(['heartbeat',()=>recallHeartbeat(anchor)]);
+  if(radius>=52||constraints.excludedLanguages.length)jobs.push(['fm',()=>recallFm()]);
   if(radius>=78)jobs.push(['daily',()=>recallDaily()]);
   const results=await Promise.all(jobs.map(async([name,fn])=>{try{return [name,await fn(),null];}catch(e){console.warn(`[recall:${name}] ${e.message}`);return [name,[],e.message];}}));
   const meta={}; const all=[]; for(const [name,items,error] of results){meta[name]={count:items.length,error:error||null};all.push(...items);} return {items:withTasteFlags(dedupe(all).filter(t=>!sameTrack(t,anchor))),meta};
@@ -512,6 +620,54 @@ async function recallPool(anchor,radius,analysis){
 
 function containsCjk(s){return /[\u3400-\u9fff]/.test(String(s||''));}
 function tokenize(s){return String(s||'').toLowerCase().split(/[\s,，、/|;；]+/).filter(Boolean);}
+function parseSessionConstraints(stateWords='',excludes=''){
+  const raw=`${stateWords} ${excludes}`.trim();
+  const excludedLanguages=[];
+  const zhNegative=/(?:不要|别|不想(?:听)?|避免|排除)[^，,。；;\n]{0,10}(?:华语|中文(?:歌|歌曲|音乐)?|国语|普通话|粤语|mandopop|cantopop|c-pop)/i.test(raw)
+    || /(?:华语|中文(?:歌|歌曲|音乐)?|国语|普通话|粤语|mandopop|cantopop|c-pop)[^，,。；;\n]{0,8}(?:不要|排除|避免)/i.test(raw);
+  if(zhNegative)excludedLanguages.push('zh');
+  return {raw,excludedLanguages};
+}
+function hasKana(s){return /[\u3040-\u30ff]/.test(String(s||''));}
+function hasHangul(s){return /[\uac00-\ud7af]/.test(String(s||''));}
+function metadataLanguageHint(track){
+  const hay=`${track?.artist||''} ${track?.title||''} ${track?.album||''} ${(track?.tags||[]).join(' ')}`;
+  if(/mandopop|cantopop|c-pop|华语|国语|普通话|粤语|中文歌/i.test(hay))return {code:'zh',confidence:'high'};
+  if(hasKana(hay))return {code:'ja',confidence:'high'};
+  if(hasHangul(hay))return {code:'ko',confidence:'high'};
+  return {code:'unknown',confidence:'low'};
+}
+function languageBlocked(code,constraints){return Boolean(code&&constraints?.excludedLanguages?.includes(String(code).toLowerCase()));}
+function rowLanguageBlocked(row,track,constraints){
+  if(!constraints?.excludedLanguages?.length)return false;
+  const code=String(row?.language||row?.language_code||'unknown').toLowerCase();
+  const confidence=String(row?.language_confidence||row?.languageConfidence||'low').toLowerCase();
+  if(languageBlocked(code,constraints)&&confidence!=='low')return true;
+  const hint=metadataLanguageHint(track);
+  return languageBlocked(hint.code,constraints)&&hint.confidence==='high';
+}
+function localLanguageBlocked(track,constraints){
+  if(!constraints?.excludedLanguages?.length)return false;
+  const hint=metadataLanguageHint(track);
+  return languageBlocked(hint.code,constraints)&&hint.confidence==='high';
+}
+function sameArtistConflictsWithConstraints(anchor,analysis,constraints){
+  if(!constraints?.excludedLanguages?.length)return false;
+  const code=String(analysis?.anchorLanguage?.code||'unknown').toLowerCase();
+  const confidence=String(analysis?.anchorLanguage?.confidence||'low').toLowerCase();
+  if(languageBlocked(code,constraints)&&confidence!=='low')return true;
+  const text=`${anchor?.artist||''} ${anchor?.title||''}`;
+  // Conservative recall choice only: a Han-script anchor with no kana/hangul is
+  // likely to violate an explicit “不要华语” request. This does NOT classify
+  // Japanese/Korean candidates as Chinese; candidate language is judged later.
+  if(constraints.excludedLanguages.includes('zh')&&containsCjk(text)&&!hasKana(text)&&!hasHangul(text))return true;
+  return false;
+}
+function constraintPrompt(constraints){
+  if(!constraints?.excludedLanguages?.length)return '';
+  const labels=constraints.excludedLanguages.map(x=>x==='zh'?'中文演唱/华语':x).join('、');
+  return `硬约束：不要 ${labels}。召回方向必须从源头跨到允许的语言空间，不能只靠最后过滤。`;
+}
 function negativeFromInstruction(text=''){
   const s=String(text||''); const out=[];
   const re=/(?:不要|别|不想听?|避免)\s*([^，,。；;\n]+)/g; let m;
@@ -522,7 +678,6 @@ function effectiveExcludes(stateWords='',excludes=''){return [excludes,negativeF
 function exclusionHit(track,excludes){
   const words=tokenize(excludes); if(!words.length)return false; const hay=`${track.title} ${track.artist} ${track.album} ${(track.tags||[]).join(' ')}`.toLowerCase();
   for(const w of words){
-    if(['华语','中文','国语','mandopop'].includes(w)&&containsCjk(`${track.artist}${track.title}`))return true;
     if(['edm','电子'].includes(w)&&/(edm|electronic|house|techno|电子)/i.test(hay))return true;
     if(['太欢快','欢快','快乐'].includes(w)&&/(happy|upbeat|欢快|快乐|活力)/i.test(hay))return true;
     if(w.length>1&&hay.includes(w))return true;
@@ -557,26 +712,39 @@ function eligibleByFormat(track,analysis,stateWords='',excludes=''){
 }
 function diversify(items,anchor,limit=Math.max(config.queueSize,6),radius=session.radius){
   const out=[]; const counts=new Map(); const albumCounts=new Map(); const seenTracks=new Set();
-  for(const t of items){
-    const trackKey=t.encryptedId||keyFor(t); if(seenTracks.has(trackKey))continue;
+  const anchorArtist=String(anchor.artist||'').toLowerCase();
+  const delayedAnchor=[];
+  function tryPush(t){
+    const trackKey=t.encryptedId||keyFor(t); if(seenTracks.has(trackKey))return false;
     const artist=String(t.artist||'').toLowerCase();
-    const isAnchorArtist=artist===String(anchor.artist||'').toLowerCase();
+    const isAnchorArtist=artist===anchorArtist;
     const cap=isAnchorArtist?(Number(radius)<=18?2:1):1;
-    if((counts.get(artist)||0)>=cap)continue;
+    if((counts.get(artist)||0)>=cap)return false;
     const album=String(t.album||'').trim().toLowerCase();
     const albumKey=album?`${artist}::${album}`:'';
-    if(albumKey&&(albumCounts.get(albumKey)||0)>=1)continue;
+    if(albumKey&&(albumCounts.get(albumKey)||0)>=1)return false;
     out.push(t); seenTracks.add(trackKey); counts.set(artist,(counts.get(artist)||0)+1);
     if(albumKey)albumCounts.set(albumKey,(albumCounts.get(albumKey)||0)+1);
+    return true;
+  }
+  for(const t of items){
+    const isAnchorArtist=String(t.artist||'').toLowerCase()===anchorArtist;
+    // At normal exploration distances, same-artist tracks are a safety net, not
+    // the product value. Do not let them occupy the first three positions.
+    if(Number(radius)>18&&isAnchorArtist&&out.length<3){delayedAnchor.push(t);continue;}
+    tryPush(t);
     if(out.length>=limit)break;
+  }
+  if(out.length<limit){
+    for(const t of delayedAnchor){if(out.length>=limit)break;tryPush(t);}
   }
   return out;
 }
-function localRank(pool,anchor,radius,stateWords,excludes,analysis){
+function localRank(pool,anchor,radius,stateWords,excludes,analysis,constraints={excludedLanguages:[]}){
   const neg=new Set(session.negativeArtists.map(x=>x.toLowerCase())); const pos=new Set(session.positiveArtists.map(x=>x.toLowerCase())); const profile=profileFor(anchor.artist);
-  let items=pool.filter(t=>!neg.has(t.artist.toLowerCase())&&!exclusionHit(t,excludes)&&eligibleByFormat(t,analysis,stateWords,excludes)&&!coarseWorldBreak(t,analysis,radius)).map((t,i)=>{
+  let items=pool.filter(t=>!neg.has(t.artist.toLowerCase())&&!exclusionHit(t,excludes)&&!localLanguageBlocked(t,constraints)&&eligibleByFormat(t,analysis,stateWords,excludes)&&!coarseWorldBreak(t,analysis,radius)).map((t,i)=>{
     const distance=profileDistance(t,anchor); let score=100-Math.max(0,distance-radius)*1.4-distance*.25;
-    if(pos.has(t.artist.toLowerCase()))score+=18; if(distance<=radius)score+=10; if(t.liked)score+=3; else if(t.recent)score+=1; if(t.source==='heartbeat')score+=8; if(t.source==='semantic-search')score+=11; if(t.source==='same-artist'&&radius<35)score+=12;
+    if(pos.has(t.artist.toLowerCase()))score+=18; if(distance<=radius)score+=10; if(t.liked)score+=3; else if(t.recent)score+=1; if(t.source==='heartbeat')score+=6; if(t.source==='semantic-search')score+=12; if(t.source==='same-artist'&&radius<=18)score+=10; else if(t.source==='same-artist'&&radius>18)score-=8;
     const text=`${(t.tags||[]).join(' ')} ${t.artist} ${t.album}`.toLowerCase(); for(const w of tokenize(stateWords)){if(w.length>1&&text.includes(w))score+=4;}
     score+=(i%5)*0.17;
     let reason='和起点仍有清楚的听感连续性'; if(t.source==='same-artist')reason='保留起点熟悉的声音与表达方式'; else if(t.source==='heartbeat')reason='情绪与听感仍能自然接在这一轮后面'; else if(t.source==='semantic-search')reason=t.semanticReason||'沿着起点的声音气质继续展开'; else if(t.source==='fm')reason='稍微走远一点，但核心气质仍然连着'; else if(t.source==='daily')reason='更意外的一步，仍保留这一轮的核心感受';
@@ -626,12 +794,17 @@ function publicReason(reason,fallback='和起点仍有清楚的听感连续性')
   return raw;
 }
 
-async function aiRank(pool,anchor,radius,stateWords,excludes,analysis){
+async function aiRank(pool,anchor,radius,stateWords,excludes,analysis,constraints={excludedLanguages:[]}){
   if(!config.ai.apiKey)return null;
   const eligible=pool.filter(t=>eligibleByFormat(t,analysis,stateWords,excludes)&&!exclusionHit(t,excludes));
   const candidates=eligible.slice(0,48);
   if(!candidates.length)return null;
-  const instruction=[stateWords,excludes?`不要：${excludes}`:''].filter(Boolean).join('；');
+  const instruction=[stateWords,excludes?`不要：${excludes}`:'',constraintPrompt(constraints)].filter(Boolean).join('；');
+  const recentPath=[
+    ...session.history.slice(-4).map(t=>({...t,pathState:'played'})),
+    ...(session.currentRecommendation?[{...session.currentRecommendation,pathState:'current'}]:[]),
+    ...session.upcoming.slice(0,3).map(t=>({...t,pathState:'planned'}))
+  ];
   const prompt=buildRankingPrompt({
     anchor,
     radius,
@@ -639,18 +812,28 @@ async function aiRank(pool,anchor,radius,stateWords,excludes,analysis){
     analysis,
     candidates,
     positiveArtists:session.positiveArtists,
-    negativeArtists:session.negativeArtists
+    negativeArtists:session.negativeArtists,
+    recentPath
   });
   const content=await callAI(RANK_SYSTEM,prompt); if(!content)return null;
   const parsed=looseParse(content);
   const arr=Array.isArray(parsed)?parsed:(Array.isArray(parsed?.ranking)?parsed.ranking:[]);
   if(!arr.length)throw new Error('AI Provider 未返回 ranking JSON 数组');
+  const sequence=Array.isArray(parsed?.sequence)?parsed.sequence.map(Number).filter(Number.isFinite):[];
+  const sequenceOrder=new Map(sequence.map((id,i)=>[Number(id),i]));
+  const rows=[...arr].sort((a,b)=>{
+    const ai=sequenceOrder.has(Number(a?.candidate_id??a?.i))?sequenceOrder.get(Number(a?.candidate_id??a?.i)):999;
+    const bi=sequenceOrder.has(Number(b?.candidate_id??b?.i))?sequenceOrder.get(Number(b?.candidate_id??b?.i)):999;
+    if(ai!==bi)return ai-bi;
+    return (Number(b?.score)||0)-(Number(a?.score)||0);
+  });
   const picked=[];
-  for(const x of arr){
+  for(const x of rows){
     const idx=Number(x.candidate_id ?? x.i);
     const t=candidates[idx];
     if(!t||picked.some(p=>p.encryptedId===t.encryptedId))continue;
     if(session.negativeArtists.some(a=>a.toLowerCase()===t.artist.toLowerCase()))continue;
+    if(rowLanguageBlocked(x,t,constraints))continue;
     if(!eligibleByFormat(t,analysis,stateWords,excludes)||exclusionHit(t,excludes))continue;
     if(rankingWorldBreak(x,radius))continue;
     const confidence=String(x.confidence||'medium').toLowerCase();
@@ -659,15 +842,32 @@ async function aiRank(pool,anchor,radius,stateWords,excludes,analysis){
     const explicit=Number(x.perceptual_distance);
     let mapped=Number.isFinite(explicit)?Math.max(0,Math.min(100,explicit)):null;
     if(mapped==null) mapped=label==='near'?24:label==='medium'?50:label==='far'?76:50;
-    // The user-selected radius is a maximum drift boundary. A candidate may be
-    // brilliant but still belong to a farther session.
     if(mapped>radius+10 && radius<=65)continue;
-    picked.push({...t,distance:mapped,reason:publicReason(x.reason,'和起点的声音与情绪能自然接上'),aiScore:Number(x.score)||0,continuity:x.continuity||{},worldBreaks:Array.isArray(x.world_breaks)?x.world_breaks:[],confidence});
-    if(picked.length>=Math.max(config.queueSize,8))break;
+    const enriched={
+      ...t,
+      distance:mapped,
+      reason:publicReason(x.reason,'它接住了起点没有说完的那一部分'),
+      aestheticJudgment:String(x.aesthetic_judgment||x.aestheticJudgment||''),
+      transitionLogic:String(x.transition_logic||x.transitionLogic||''),
+      journeyRole:String(x.journey_role||x.journeyRole||'open').toLowerCase(),
+      nextSongWorthiness:x.next_song_worthiness??x.nextSongWorthiness,
+      meaningfulDifference:x.meaningful_difference??x.meaningfulDifference,
+      surpriseValue:x.surprise_value??x.surpriseValue,
+      obviousness:x.obviousness,
+      clicheRisk:x.cliche_risk??x.clicheRisk,
+      sequenceIndex:sequenceOrder.has(idx)?sequenceOrder.get(idx):null,
+      aiScore:Number(x.score)||0,
+      continuity:x.continuity||{},
+      worldBreaks:Array.isArray(x.world_breaks)?x.world_breaks:[],
+      confidence
+    };
+    if(aestheticReject(enriched,radius))continue;
+    picked.push(enriched);
   }
-  return picked.length?diversify(picked,anchor,Math.max(config.queueSize,8)):null;
+  if(!picked.length)return null;
+  const arc=composeListeningArc(picked,anchor,radius,Math.max(config.queueSize,8));
+  return arc.length?diversify(arc,anchor,Math.max(config.queueSize,8)):null;
 }
-
 
 function guardPlaybackAfterQueue(before){
   if(MOCK||!before?.title||!before?.artist||Number(before.playbackRate)<=0)return;
@@ -709,18 +909,19 @@ function filterKnown(items){
 
 async function planBatch(anchor,analysis,onProgress=()=>{}, {refill=false}={}){
   const activeExcludes=effectiveExcludes(session.stateWords,session.excludes);
+  const constraints=parseSessionConstraints(session.stateWords,activeExcludes);
   onProgress(refill?'refill-recall':'recall',refill?'正在补充后续':'网易云正在沿这些方向找歌',refill?35:58);
-  let recall=await recallPool(anchor,session.radius,analysis);
+  let recall=await recallPool(anchor,session.radius,analysis,constraints);
   let pool=filterKnown(recall.items);
   if(!pool.length && !refill) pool=recall.items;
-  if(!pool.length)throw new Error('网易云候选召回为空。请检查当前推荐命令是否可用。');
+  if(!pool.length)throw new Error(constraints.excludedLanguages.length?'当前硬约束下暂时没有找到可用候选。From Here 不会退回被你排除的音乐来凑数；请稍后重试。':'当前歌曲已经识别，但这次没有找到能加入播放队列的后续歌曲。请稍后重试，或把探索距离稍微打开一点。');
   onProgress(refill?'refill-rank':'rank',refill?'让后面继续留在这一轮':'比较候选，守住这一刻的感觉',refill?62:76);
   let engine='local-session', ranked=null;
   try{
-    ranked=await aiRank(pool,anchor,session.radius,session.stateWords,activeExcludes,analysis);
+    ranked=await aiRank(pool,anchor,session.radius,session.stateWords,activeExcludes,analysis,constraints);
     if(ranked?.length)engine='ai-session';
   }catch(e){console.warn('[AI rank fallback]',e.message);}
-  if(!ranked?.length) ranked=localRank(pool,anchor,session.radius,session.stateWords,activeExcludes,analysis);
+  if(!ranked?.length) ranked=localRank(pool,anchor,session.radius,session.stateWords,activeExcludes,analysis,constraints);
   ranked=ranked.filter(t=>!sameTrack(t,anchor));
 
   // A single excellent recommendation is not a usable continuous Session. If
@@ -738,20 +939,20 @@ async function planBatch(anchor,analysis,onProgress=()=>{}, {refill=false}={}){
       // loosening continuity thresholds or inventing filler.
       for(let rescue=0; rescue<2 && byId.size<config.minQueueSize && remaining.length; rescue++){
         let more=null;
-        try{more=await aiRank(remaining,anchor,session.radius,session.stateWords,activeExcludes,analysis);}catch(e){console.warn('[AI expanded rank fallback]',e.message);}
-        if(!more?.length && !config.ai.apiKey)more=localRank(remaining,anchor,session.radius,session.stateWords,activeExcludes,analysis);
+        try{more=await aiRank(remaining,anchor,session.radius,session.stateWords,activeExcludes,analysis,constraints);}catch(e){console.warn('[AI expanded rank fallback]',e.message);}
+        if(!more?.length && !config.ai.apiKey)more=localRank(remaining,anchor,session.radius,session.stateWords,activeExcludes,analysis,constraints);
         for(const t of more||[])byId.set(t.encryptedId||keyFor(t),t);
         remaining=remaining.filter(t=>!byId.has(t.encryptedId||keyFor(t)));
       }
       // When AI is unavailable, local rank may safely fill because deterministic
       // format/world-break guards have already run. With AI configured we never
       // bypass the model's continuity gate merely to hit a count.
-      if(!config.ai.apiKey && byId.size<config.minQueueSize){for(const t of localRank(remaining,anchor,session.radius,session.stateWords,activeExcludes,analysis))byId.set(t.encryptedId||keyFor(t),t);}
+      if(!config.ai.apiKey && byId.size<config.minQueueSize){for(const t of localRank(remaining,anchor,session.radius,session.stateWords,activeExcludes,analysis,constraints))byId.set(t.encryptedId||keyFor(t),t);}
       ranked=diversify([...byId.values()].filter(t=>!sameTrack(t,anchor)),anchor,Math.max(config.queueSize,8));
       recall={items:merged,meta:{...recall.meta,expandedSemantic:{count:extra.length,error:null}}};
     }catch(e){console.warn('[expanded recall]',e.message);}
   }
-  if(!ranked.length)throw new Error('候选全部被当前边界过滤掉了。可以把距离稍微打开一点。');
+  if(!ranked.length)throw new Error(constraints.excludedLanguages.length?'当前硬约束下没有找到足够可靠的后续歌曲。From Here 不会用不符合要求的歌凑数；可以换一种描述或稍后重试。':'候选全部被当前边界过滤掉了。可以把距离稍微打开一点。');
   return {ranked,recall,engine};
 }
 
@@ -766,7 +967,10 @@ function currentRelation(){
     track:t,
     anchor:session.anchor,
     reason:publicReason(t.reason,'和起点的声音与情绪能自然接上'),
-    distance:Number.isFinite(Number(t.distance))?Number(t.distance):null
+    distance:Number.isFinite(Number(t.distance))?Number(t.distance):null,
+    journeyRole:t.journeyRole||null,
+    aestheticJudgment:t.aestheticJudgment||null,
+    transitionLogic:t.transitionLogic||null
   };
 }
 
@@ -787,7 +991,8 @@ async function buildSession(input={},forceNew=false,onProgress=()=>{}){
   session.stateWords=String(input.stateWords??session.stateWords??'').trim();
   session.excludes=String(input.excludes??session.excludes??'').trim();
   const activeExcludes=effectiveExcludes(session.stateWords,session.excludes);
-  const instruction=[session.stateWords,activeExcludes?`明确排除：${activeExcludes}`:''].filter(Boolean).join('；');
+  const constraints=parseSessionConstraints(session.stateWords,activeExcludes);
+  const instruction=[session.stateWords,activeExcludes?`明确排除：${activeExcludes}`:'',constraintPrompt(constraints)].filter(Boolean).join('；');
   onProgress('understand','理解这首歌的声音与情绪',30);
   const analysis=await analyzeAnchor(anchor,session.radius,instruction,forceNew);
   onProgress('directions','找到几条可以继续走的路',48);
@@ -938,10 +1143,10 @@ function sessionView(nowTrack=null,playbackState=null){
 }
 
 async function health(){
-  let ncm=MOCK,version=MOCK?'mock':'',nowPlaying=MOCK,login=null,player=null,error=null;
+  let ncm=MOCK,version=MOCK?'mock':'',nowPlaying=MOCK,login=MOCK,player=null,error=null;
   if(config.ai.apiKey) await discoverAI();
-  if(!MOCK){try{const r=await runNcm(['--version'],5000);ncm=true;version=r.stdout;}catch(e){error=e.message;} try{await run('nowplaying-cli',['get','title'],4000);nowPlaying=true;}catch{} try{player=(await runNcm(['config','get','player'],5000)).stdout;}catch{} }
-  return {ok:true,app:'from-here',appVersion:'1.0.0',mock:MOCK,ncm,nowPlaying,version,player,aiConfigured:aiProvider.state.status==='ready',ai:{...aiView(),modelMode:config.ai.modelMode,localModel:config.ai.localModel,localSource:config.ai.localSource},error};
+  if(!MOCK){try{const r=await runNcm(['--version'],5000);ncm=true;version=r.stdout;}catch(e){error=e.message;} try{await nowSnapshot();nowPlaying=true;}catch{} try{await runNcm(['login','--check'],5000);login=true;}catch{login=false;} try{player=(await runNcm(['config','get','player'],5000)).stdout;}catch{} }
+  return {ok:true,app:'from-here',appVersion:'1.1.0',mock:MOCK,ncm,ncmAuthorized:!!login,nowPlaying,version,player,aiConfigured:aiProvider.state.status==='ready',ai:{...aiView(),modelMode:config.ai.modelMode,localModel:config.ai.localModel,localSource:config.ai.localSource},error};
 }
 
 const server=http.createServer(async(req,res)=>{
@@ -968,7 +1173,7 @@ const server=http.createServer(async(req,res)=>{
 
 server.listen(config.port,'127.0.0.1',()=>{
   setTimeout(()=>refreshHistoryMemory().catch(()=>{}),150).unref?.();
-  console.log(`\n● From Here v1.0.0 · http://127.0.0.1:${config.port}`);
+  console.log(`\n● From Here v1.1.0 · Listening Judgment · http://127.0.0.1:${config.port}`);
   console.log(`模式：${MOCK?'MOCK':'网易云 ncm-cli + macOS Now Playing'}`);
   console.log(`推荐：Anchor 语义理解 → 网易云多路召回 → ${config.ai.apiKey?'AI Provider（失败时回退本地）':'本地 Session Rank（AI 未配置）'}`);
   if(config.ai.apiKey) discoverAI(true).then(a=>console.log(a.status==='ready'?`AI：${a.model} · ${a.protocol||'auto'} · 已连接\n`:`AI：连接失败 · ${a.lastError}\n`));
