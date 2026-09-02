@@ -1,5 +1,8 @@
 // v1.1.1 UI patch: recommendation reasons should expose the actual musical bridge,
 // not explain internal recall/ranking machinery or repeat a generic success phrase.
+// This patch also makes AI degradation explicit: without a working AI judgment
+// provider, From Here must not present Heartbeat/local fallback guesses as if they
+// were high-confidence listening judgments.
 
 function isGenericBridgeReason(value='') {
   const x=String(value||'').trim();
@@ -16,8 +19,51 @@ function concreteBridgeReason(track) {
   return '';
 }
 
+function aiJudgmentReady() {
+  return health?.ai?.status==='ready';
+}
+
+async function requireAIJudgment() {
+  try {
+    health=await api('/api/health');
+    healthAt=Date.now();
+    renderSettings();
+  } catch {}
+  if(aiJudgmentReady())return true;
+  els.settings.classList.remove('hidden');
+  renderSettings();
+  const status=health?.ai?.status;
+  toast(status==='error'?'AI 暂不可用 · 先恢复连接再探索':'AI 未配置 · 这版不会用本地排序乱猜');
+  return false;
+}
+
+// A source/test checkout does not carry the previous release's private
+// bridge/config.local.json. If auto-discovery misses that provider, v1.1.0 used to
+// silently fall back to Heartbeat/local ranking. That can surface long-term taste
+// tracks unrelated to the current anchor. Block new Sessions instead of pretending
+// those guesses are From Here judgment.
+const startSessionWithJudgment=startSession;
+startSession=async function(force=false){
+  if(!(await requireAIJudgment()))return;
+  return startSessionWithJudgment(force);
+};
+
+const feedbackWithJudgment=feedback;
+feedback=async function(type){
+  if(session?.engine==='local-session' && !(await requireAIJudgment()))return;
+  return feedbackWithJudgment(type);
+};
+
 // Replace only the queue renderer. Everything else stays owned by sidepanel.js.
 renderQueue = function(s){
+  if(s?.engine==='local-session'){
+    if(els.queueCount)els.queueCount.textContent='';
+    els.nextTrack.innerHTML='<div><h3>这一轮没有启用 AI 判断</h3><p>不展示本地兜底的猜测结果</p></div>';
+    els.moreToggle.classList.add('hidden');
+    els.moreQueue.classList.add('hidden');
+    return;
+  }
+
   const q=s?.upcoming||s?.queue||[];
   if(els.queueCount)els.queueCount.textContent=q.length?`· ${q.length} 首`:'';
   const first=q[0];
