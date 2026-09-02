@@ -80,10 +80,10 @@ J. Language / Cultural Texture｜语言与咬字
 语言不是默认 hard constraint，但属于高惯性维度。换语言的同时如果又丢失其它高权重身份，应视为更大的 perceptual jump。
 
 重要：为了兼容当前运行时，请把 Dominant Identity 写进 fingerprint.must_preserve 的最前面，使用严格格式：
-`IDENTITY[type|strength] 可听见的具体说明`
+'IDENTITY[type|strength] 可听见的具体说明'
 例如：
-`IDENTITY[vocal_persona|0.96] 厚实胸声、强投射；脆弱情绪仍由有力量的身体表达`
-`IDENTITY[production|0.93] 四拍 kick + 紧实 bass + 明亮 synth build 构成主要身体感`
+'IDENTITY[vocal_persona|0.96] 厚实胸声、强投射；脆弱情绪仍由有力量的身体表达'
+'IDENTITY[production|0.93] 四拍 kick + 紧实 bass + 明亮 synth build 构成主要身体感'
 最多 3 个 IDENTITY 项；只有 strength >=0.65 才能写进去。
 
 另外给 fingerprint.salience 一个 0-1 权重表，用来表示普通听觉维度的重要性。它不是 Dominant Identity 的替代，而是第二层连续性权重。
