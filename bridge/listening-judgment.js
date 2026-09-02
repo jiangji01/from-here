@@ -5,12 +5,37 @@ function unit(value) {
   return Math.max(0, Math.min(1, n));
 }
 
+const CONTINUITY_WEIGHTS = {
+  // A voice is not just another tag. When the anchor is vocal-led, losing the
+  // singer's physical presence / timbral identity is one of the fastest ways to
+  // make a transition feel like a different world.
+  vocal: 1.55,
+  timbre: 1.45,
+  dynamics: 1.10,
+  rhythm_motion: 1.00,
+  instrumentation_texture: 0.95,
+  emotional_core: 1.00,
+  imagery_narrative: 0.70
+};
+
 function continuityAverage(track) {
   const c = track?.continuity && typeof track.continuity === 'object' ? track.continuity : {};
-  const values = ['vocal','timbre','instrumentation_texture','rhythm_motion','dynamics','emotional_core','imagery_narrative']
-    .map(k => unit(c[k]))
-    .filter(v => v != null);
-  return values.length ? values.reduce((a,b)=>a+b,0) / values.length : null;
+  let weighted = 0;
+  let weights = 0;
+  for (const [key, baseWeight] of Object.entries(CONTINUITY_WEIGHTS)) {
+    const value = unit(c[key]);
+    if (value == null) continue;
+    const salience = unit(track?.continuitySalience?.[key]);
+    const weight = baseWeight * (salience == null ? 1 : (0.65 + salience * 0.7));
+    weighted += value * weight;
+    weights += weight;
+  }
+  return weights ? weighted / weights : null;
+}
+
+function vocalContinuity(track) {
+  const c = track?.continuity && typeof track.continuity === 'object' ? track.continuity : {};
+  return { vocal: unit(c.vocal), timbre: unit(c.timbre) };
 }
 
 function normalizeRole(role='') {
@@ -57,6 +82,22 @@ function roleBonus(role, position, radius, selected) {
   return bonus;
 }
 
+function firstStepVoiceAdjustment(track, radius) {
+  if (Number(radius) > 65) return 0;
+  const { vocal, timbre } = vocalContinuity(track);
+  if (vocal == null && timbre == null) return 0;
+
+  // The first song earns trust. A severe voice/timbre break must not be rescued
+  // by semantic emotion, novelty or a clever sequence score.
+  if ((vocal != null && vocal < 0.45) || (timbre != null && timbre < 0.43)) return -100;
+  if (vocal != null && timbre != null && vocal < 0.55 && timbre < 0.55) return -60;
+
+  let adjustment = 0;
+  if (vocal != null) adjustment += (vocal - 0.64) * 22;
+  if (timbre != null) adjustment += (timbre - 0.62) * 20;
+  return adjustment;
+}
+
 function candidateScore(track, position, radius, selected, anchor) {
   const worth = unit(track?.nextSongWorthiness) ?? 0.62;
   const continuity = continuityAverage(track) ?? 0.58;
@@ -67,14 +108,14 @@ function candidateScore(track, position, radius, selected, anchor) {
   const ai = Number.isFinite(Number(track?.aiScore)) ? Math.max(0, Math.min(100, Number(track.aiScore))) / 100 : 0.55;
   const seq = Number.isFinite(Number(track?.sequenceIndex)) ? Number(track.sequenceIndex) : null;
 
-  let score = worth * 34 + continuity * 22 + difference * 12 + ai * 12;
-  score += Math.min(surprise, Number(radius) <= 25 ? 0.45 : 0.75) * 8;
+  let score = worth * 34 + continuity * 26 + difference * 9 + ai * 12;
+  score += Math.min(surprise, Number(radius) <= 25 ? 0.40 : 0.70) * 6;
   score -= obvious * 10 + cliche * 14;
   score += roleBonus(track?.journeyRole, position, radius, selected);
 
   // Respect the model's holistic sequence when it supplied one, but do not let it
-  // override deterministic anti-laziness / journey guards.
-  if (seq != null) score += Math.max(0, 14 - seq * 2.2);
+  // override deterministic continuity / journey guards.
+  if (seq != null) score += Math.max(0, 12 - seq * 2.0);
 
   const prev = selected[selected.length - 1];
   if (prev && String(prev.source || '') === String(track.source || '')) score -= 3.5;
@@ -83,8 +124,12 @@ function candidateScore(track, position, radius, selected, anchor) {
   const artist = String(track?.artist || '').toLowerCase();
   if (Number(radius) > 18 && anchorArtist && artist === anchorArtist && position < 3) score -= 100;
 
-  // The first step should usually feel earned before it feels clever.
-  if (position === 0 && surprise > 0.78 && continuity < 0.68) score -= 9;
+  if (position === 0) {
+    score += firstStepVoiceAdjustment(track, radius);
+    // The first step should feel earned before it feels clever.
+    if (surprise > 0.72 && continuity < 0.70) score -= 16;
+    if (Number(radius) <= 45 && continuity < 0.58) score -= 20;
+  }
 
   return score;
 }
@@ -113,6 +158,7 @@ function composeListeningArc(items, anchor, radius=35, limit=8) {
 module.exports = {
   unit,
   continuityAverage,
+  vocalContinuity,
   normalizeRole,
   aestheticReject,
   composeListeningArc
