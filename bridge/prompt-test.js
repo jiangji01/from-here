@@ -1,5 +1,5 @@
 const assert=require('assert');
-const { buildAnchorAnalysisPrompt, buildRankingPrompt }=require('./prompts/music-semantic');
+const { RANK_SYSTEM, buildAnchorAnalysisPrompt, buildRankingPrompt }=require('./prompts/music-semantic');
 const anchor={artist:'Of Monsters and Men',title:'Dirty Paws',album:'My Head Is an Animal'};
 const a=buildAnchorAnalysisPrompt({anchor,radius:35,instruction:'更冷一点，不要纯音乐，保持人声'});
 for(const token of [
@@ -19,11 +19,16 @@ const r=buildRankingPrompt({anchor,radius:35,instruction:'保持人声',analysis
   {artist:'Guitar Tribute Players',title:'Dirty Paws Tribute',album:'',tags:['tribute','instrumental'],source:'heartbeat'}
 ],positiveArtists:[],negativeArtists:[]});
 
+// Identify → Preserve → Drift → Surprise is a system-level judgment contract.
+// Candidate-specific enforcement belongs in the ranking prompt.
+for(const token of ['Identify','Preserve','Drift','Surprise']) {
+  assert(RANK_SYSTEM.includes(token),`missing ranking-system contract: ${token}`);
+}
 for(const token of [
-  'Identify','Preserve','Drift','Surprise','identity_strength','identity_match','almost non-compensatory identity guard',
+  'identity_strength','identity_match','almost non-compensatory identity guard',
   '同艺人不是扣分项也不是加分项','source=heartbeat','confidence=low','推荐理由必须','保留了什么 + 改变了什么',
   'world_breaks','perceptual_distance','melody_harmony','language'
-]) assert(r.includes(token),`missing ranking contract: ${token}`);
+]) assert(r.includes(token),`missing ranking prompt contract: ${token}`);
 assert(!r.includes('前三首不要出现 Anchor Artist'),'legacy anti-same-artist rule must not remain in ranking prompt');
 assert(!r.includes('rough_distance'),'recall source distance must not leak into AI prompt');
 
