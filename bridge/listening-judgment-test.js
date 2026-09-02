@@ -1,5 +1,5 @@
 const assert = require('assert');
-const { aestheticReject, composeListeningArc } = require('./listening-judgment');
+const { aestheticReject, composeListeningArc, continuityAverage } = require('./listening-judgment');
 
 const anchor={artist:'回春丹',title:'鲜花'};
 const base={continuity:{vocal:.8,timbre:.75,instrumentation_texture:.76,rhythm_motion:.72,dynamics:.7,emotional_core:.82,imagery_narrative:.78},worldBreaks:[],confidence:'high'};
@@ -20,4 +20,22 @@ assert.notEqual(arc[0].artist,'回春丹','same artist must not occupy first ste
 assert(['hold','deepen','open'].includes(arc[0].journeyRole),'first step should earn trust before a hard turn');
 assert(!arc.some(x=>x.artist==='Generic Rock Band'),'low-worth cliché leaked into arc');
 assert(new Set(arc.map(x=>x.journeyRole)).size>=3,'arc should have role variety rather than five isolated same-role winners');
-console.log('✓ Listening Judgment: worthiness gate + anti-obviousness + trajectory composition');
+
+// Regression: a semantically clever candidate with weak vocal/timbral continuity
+// must not beat a less surprising candidate that preserves the anchor's vocal body.
+const vocalAnchor={artist:'Imagine Dragons',title:'In Your Corner'};
+const voicePreserved={
+  artist:'Power Vocal',title:'Keeps The Weight',source:'semantic-search',aiScore:84,
+  nextSongWorthiness:.88,meaningfulDifference:.38,surpriseValue:.28,obviousness:.24,clicheRisk:.08,journeyRole:'deepen',sequenceIndex:1,
+  continuity:{vocal:.90,timbre:.86,instrumentation_texture:.68,rhythm_motion:.72,dynamics:.84,emotional_core:.78,imagery_narrative:.70}
+};
+const semanticButThin={
+  artist:'Clever Turn',title:'Same Feeling, Different Body',source:'semantic-search',aiScore:97,
+  nextSongWorthiness:.94,meaningfulDifference:.78,surpriseValue:.82,obviousness:.10,clicheRisk:.05,journeyRole:'open',sequenceIndex:0,
+  continuity:{vocal:.38,timbre:.40,instrumentation_texture:.80,rhythm_motion:.78,dynamics:.74,emotional_core:.94,imagery_narrative:.93}
+};
+const vocalArc=composeListeningArc([semanticButThin,voicePreserved],vocalAnchor,35,2);
+assert.equal(vocalArc[0].title,'Keeps The Weight','first step should preserve vocal body before rewarding a clever semantic turn');
+assert(continuityAverage(voicePreserved)>continuityAverage(semanticButThin),'weighted continuity should give vocal/timbre more authority');
+
+console.log('✓ Listening Judgment: worthiness + vocal-first continuity + trajectory composition');
