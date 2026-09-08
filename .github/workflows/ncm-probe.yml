@@ -1,0 +1,29 @@
+name: Probe ncm-cli runtime
+on:
+  push:
+    paths: ['.github/workflows/ncm-probe.yml']
+jobs:
+  probe:
+    runs-on: macos-15
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.22.0'
+      - name: Probe official ncm-cli 0.1.7
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --prefix "$RUNNER_TEMP/ncm" --omit=dev --ignore-scripts '@music163/ncm-cli@0.1.7'
+          export PATH="$RUNNER_TEMP/ncm/node_modules/.bin:$PATH"
+          export HOME="$RUNNER_TEMP/fresh-home"
+          mkdir -p "$HOME"
+          echo '=== version ==='; ncm-cli --version || true
+          echo '=== top help ==='; ncm-cli --help || true
+          echo '=== search help ==='; ncm-cli search song --help || true
+          echo '=== user help ==='; ncm-cli user --help || true
+          echo '=== login check fresh home ==='; ncm-cli login --check || true
+          echo '=== config set player ==='; ncm-cli config set player orpheus || true
+          echo '=== home files after config set ==='; find "$HOME" -maxdepth 4 -type f -print | sed "s#$HOME#~#" | sort
+          echo '=== dirs after config set ==='; find "$HOME" -maxdepth 3 -type d -print | sed "s#$HOME#~#" | sort
+          echo '=== search unauthenticated ==='; ncm-cli search song --keyword 'Linkin Park In the End' --userInput 'probe' || true
+          echo '=== favorite unauthenticated ==='; ncm-cli user favorite --userInput 'probe' || true
