@@ -1,0 +1,38 @@
+name: Probe ncm-cli Commands
+on:
+  push:
+    branches: ['fix/v1.1.1-listening-continuity']
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: macos-15
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.22.0'
+      - name: Probe configured command registration
+        shell: bash
+        run: |
+          set -u
+          npm install --prefix "$RUNNER_TEMP/ncm" --omit=dev --ignore-scripts '@music163/ncm-cli@0.1.7'
+          export PATH="$RUNNER_TEMP/ncm/node_modules/.bin:$PATH"
+          export HOME="$RUNNER_TEMP/home"; mkdir -p "$HOME"
+          echo '=== set dummy config ==='
+          ncm-cli config set appId 123456 || true
+          ncm-cli config set privateKey dummy_private_key || true
+          echo '=== config files ==='
+          find "$HOME/.config/ncm-cli" -maxdepth 2 -type f -print -exec sh -c 'echo --- $1; sed -E "s/(privateKey|appId).*/\\1: [redacted]/g" "$1" | head -80' _ {} \; || true
+          echo '=== top help configured ==='
+          ncm-cli --help || true
+          echo '=== search help configured ==='
+          ncm-cli search --help || true
+          echo '=== user help configured ==='
+          ncm-cli user --help || true
+          echo '=== recommend help configured ==='
+          ncm-cli recommend --help || true
+          echo '=== queue help configured ==='
+          ncm-cli queue --help || true
+          echo '=== bundle command registration clues ==='
+          ENTRY="$RUNNER_TEMP/ncm/node_modules/@music163/ncm-cli/dist/index.js"
+          grep -aoE '.{0,100}(register|dynamic|command|search|favorite|history|heartbeat|daily|fm).{0,160}' "$ENTRY" | head -200 || true
