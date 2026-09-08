@@ -1,0 +1,51 @@
+name: Probe historical ncm-cli versions
+on:
+  push:
+    branches: ['fix/v1.1.1-listening-continuity']
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        version: ['0.1.0','0.1.1','0.1.2','0.1.3','0.1.4','0.1.5','0.1.6','0.1.7']
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.22.0'
+      - name: Probe ${{ matrix.version }}
+        shell: bash
+        run: |
+          set -u
+          V='${{ matrix.version }}'
+          ROOT="$RUNNER_TEMP/ncm-$V"
+          HOME_DIR="$RUNNER_TEMP/home-$V"
+          mkdir -p "$HOME_DIR"
+          export HOME="$HOME_DIR"
+          echo "=== VERSION $V ==="
+          if ! npm install --prefix "$ROOT" --omit=dev --ignore-scripts "@music163/ncm-cli@$V"; then
+            echo 'INSTALL_FAILED=yes'; exit 0
+          fi
+          BIN="$ROOT/node_modules/.bin/ncm-cli"
+          echo -n 'VERSION_OUTPUT='; "$BIN" --version || true
+          "$BIN" config set appId 123456 >/dev/null 2>&1 || true
+          "$BIN" config set privateKey dummy_private_key >/dev/null 2>&1 || true
+          HELP=$($BIN --help 2>&1 || true)
+          printf '%s\n' "$HELP"
+          echo '=== REQUIRED COMMANDS ==='
+          for C in search user recommend song queue; do
+            if printf '%s\n' "$HELP" | grep -Eq "^[[:space:]]*$C([[:space:]\[])"; then echo "$C=yes"; else echo "$C=no"; fi
+          done
+          echo '=== DIRECT COMMAND CLASSIFICATION ==='
+          for C in search user recommend song queue; do
+            OUT=$($BIN "$C" --help 2>&1 || true)
+            if printf '%s' "$OUT" | grep -qi "unknown command.*'$C'"; then
+              echo "$C=unknown"
+            elif printf '%s' "$OUT" | grep -Eq "Usage: ncm-cli[[:space:]]+$C"; then
+              echo "$C=registered"
+            else
+              echo "$C=other"
+            fi
+          done
