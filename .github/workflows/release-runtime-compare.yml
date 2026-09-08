@@ -1,0 +1,54 @@
+name: Compare v1.1.0 Release Runtime
+on:
+  push:
+    branches: ['fix/v1.1.1-listening-continuity']
+permissions:
+  contents: read
+jobs:
+  compare:
+    runs-on: macos-15
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.22.0'
+      - name: Download and inspect v1.1.0 release runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL 'https://github.com/jiangji01/from-here/releases/download/v1.1.0/From-Here-v1.1.0-macOS.zip' -o old.zip
+          echo '=== release sha ==='
+          shasum -a 256 old.zip
+          unzip -q old.zip -d old
+          APP=$(find old -maxdepth 1 -type d -name 'From-Here-v1.1.0-macOS' | head -1)
+          OLD="$APP/.from-here/runtime/ncm/arm64"
+          echo "APP=$APP"
+          echo '=== old ncm package ==='
+          cat "$OLD/node_modules/@music163/ncm-cli/package.json"
+          echo '=== old symlink ==='
+          ls -l "$OLD/node_modules/.bin/ncm-cli"
+          echo '=== old entry sha ==='
+          shasum -a 256 "$OLD/node_modules/@music163/ncm-cli/dist/index.js"
+          echo '=== old command strings ==='
+          grep -aoE "search|user|favorite|history|recommend|queue|login" "$OLD/node_modules/@music163/ncm-cli/dist/index.js" | sort | uniq -c || true
+          echo '=== old cli fresh HOME behavior ==='
+          export HOME="$RUNNER_TEMP/old-home"; mkdir -p "$HOME"
+          "$APP/.from-here/runtime/node/arm64/bin/node" "$OLD/node_modules/@music163/ncm-cli/dist/index.js" --version || true
+          "$APP/.from-here/runtime/node/arm64/bin/node" "$OLD/node_modules/@music163/ncm-cli/dist/index.js" search song --keyword 'Linkin Park In the End' --userInput probe || true
+          echo '=== install fresh 0.1.7 ==='
+          npm install --prefix fresh --omit=dev --ignore-scripts '@music163/ncm-cli@0.1.7'
+          echo '=== fresh ncm package ==='
+          cat fresh/node_modules/@music163/ncm-cli/package.json
+          echo '=== fresh entry sha ==='
+          shasum -a 256 fresh/node_modules/@music163/ncm-cli/dist/index.js
+          echo '=== byte compare ==='
+          if cmp -s "$OLD/node_modules/@music163/ncm-cli/dist/index.js" fresh/node_modules/@music163/ncm-cli/dist/index.js; then echo 'ENTRY_IDENTICAL=yes'; else echo 'ENTRY_IDENTICAL=no'; fi
+          echo '=== lock/resolved versions old vs fresh ==='
+          node - <<'NODE'
+          const fs=require('fs');
+          for (const [name,p] of [['old',process.env.OLD_LOCK||''],['fresh','fresh/package-lock.json']]) {
+            if (!p || !fs.existsSync(p)) continue;
+            const j=JSON.parse(fs.readFileSync(p,'utf8'));
+            const pk=j.packages||{};
+            for (const k of Object.keys(pk).filter(k=>k.includes('@music163/ncm-cli'))) console.log(name,k,pk[k].version,pk[k].resolved||'');
+          }
+          NODE
