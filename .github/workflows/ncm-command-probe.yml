@@ -1,0 +1,31 @@
+name: Probe ncm-cli Commands
+on:
+  push:
+    branches: ['fix/v1.1.1-listening-continuity']
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: macos-15
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.22.0'
+      - name: Probe dynamic command registration failure
+        shell: bash
+        run: |
+          set -u
+          npm install --prefix "$RUNNER_TEMP/ncm" --omit=dev --ignore-scripts '@music163/ncm-cli@0.1.7'
+          export PATH="$RUNNER_TEMP/ncm/node_modules/.bin:$PATH"
+          export HOME="$RUNNER_TEMP/home"; mkdir -p "$HOME"
+          export DEBUG=1
+          ncm-cli config set appId 123456 >/dev/null 2>&1 || true
+          ncm-cli config set privateKey dummy_private_key >/dev/null 2>&1 || true
+          echo '=== DEBUG HELP ==='
+          ncm-cli --help 2>&1 || true
+          echo '=== DEBUG COMMANDS ==='
+          ncm-cli commands 2>&1 || true
+          echo '=== DEBUG SEARCH ==='
+          ncm-cli search song --keyword 'Linkin Park In the End' --userInput probe 2>&1 || true
+          echo '=== APP LOG ==='
+          cat "$HOME/.config/ncm-cli/app.log" 2>/dev/null || true

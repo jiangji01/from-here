@@ -1,0 +1,41 @@
+/* v1.1.1 — artwork + recommendation explanation polish */
+
+/* The fallback used to consume the full box in normal flow, which could push the
+   real artwork below the clipped cover container. Stack both layers instead. */
+.cover-wrap{position:relative}
+.cover-wrap .cover-fallback,
+.cover-wrap img{position:absolute;inset:0;width:100%;height:100%}
+.cover-wrap img{z-index:2;object-fit:cover}
+.cover-wrap .cover-fallback{z-index:1}
+
+/* If macOS / NetEase genuinely cannot provide artwork, use an honest From Here
+   record mark rather than pretending artist initials are album art. */
+.cover-fallback{
+  font-size:0;
+  background:
+    radial-gradient(circle at 51% 49%,rgba(18,56,200,.08) 0 8%,transparent 8.5%),
+    linear-gradient(145deg,#d9d3c7 0%,#eee9df 52%,#d7d0c3 100%);
+}
+.cover-fallback:before{
+  content:"";
+  position:absolute;
+  left:50%;top:46%;
+  width:56px;height:56px;
+  transform:translate(-50%,-50%);
+  border:2px solid #1238c8;
+  border-right-color:transparent;
+  border-radius:50%;
+  box-shadow:inset 0 0 0 14px rgba(18,56,200,.045),0 8px 22px rgba(39,35,29,.08);
+}
+.cover-fallback:after{
+  content:"FROM HERE";
+  position:absolute;
+  left:0;right:0;bottom:17px;
+  text-align:center;
+  color:#1238c8;
+  font:760 7px/1 -apple-system,BlinkMacSystemFont,"SF Pro Display","PingFang SC",sans-serif;
+  letter-spacing:.18em;
+}
+
+.bridge-reason{color:#68635c!important}
+.next-track .bridge-reason:before{content:"↳ ";color:#1238c8}

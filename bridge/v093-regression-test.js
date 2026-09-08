@@ -11,6 +11,11 @@ assert(server.includes('lyricContext'),'lyric semantic context missing');
 assert(prompt.includes('同歌手/同专辑=相似'),'prompt must reject catalog-relation shortcut for unfamiliar Chinese music');
 assert(prompt.includes("familiarity: t.liked ? 'liked'"),'weak familiarity signal missing from rank context');
 assert(server.includes('if(t.liked)score+=3; else if(t.recent)score+=1'),'familiarity must remain a weak local tie-break');
+assert(server.includes("salience:fp.salience&&typeof fp.salience==='object'?fp.salience:{}"),'anchor salience must survive normalization into ranking context');
+assert(server.includes('const cap=isAnchorArtist?2:1;'),'same-artist diversity should be a cap, not a first-three ban');
+assert(!server.includes('const delayedAnchor=[]'),'legacy same-artist delayed queue must not return');
+assert(!server.includes("else if(t.source==='same-artist'&&radius>18)score-=8"),'same artist must not receive a fixed normal-radius penalty');
+assert(!server.includes('Do not let them occupy the first three positions'),'legacy same-artist first-three ban must not return');
 assert(server.includes('session.upcoming.length<=3'),'refill must begin while there is still runway');
 assert(server.includes("position:'end'"),'autopilot refill must append instead of jumping ahead of existing next tracks');
 assert(server.includes('session.reserve'),'ranked reserve missing');
@@ -19,4 +24,4 @@ assert(server.includes("await runNcm(['resume'],5000)"),'queue-mutation playback
 assert(ui.includes("els.sessionNotice.classList.add('hidden')"),'ended-session module must not flash during instruction input');
 assert(start.includes(`发现已有 From Here 正在运行，正在切换到 ${require('./package.json').version}`),'runtime must upgrade an older From Here automatically');
 assert(start.includes('From-Here-v[^/]+-macOS'),'older release path detector missing');
-console.log('✓ v1.0.2 regressions: CJK semantics + weak taste prior + early append refill + playback guard + clean end state + old-Bridge upgrade');
+console.log('✓ regressions: CJK semantics + dominant identity wiring + weak taste prior + refill/playback guards');

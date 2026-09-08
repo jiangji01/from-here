@@ -1,0 +1,55 @@
+name: Build v1.1.1 User Test Package
+on:
+  push:
+    branches: ['fix/v1.1.1-listening-continuity']
+permissions:
+  contents: read
+jobs:
+  build-arm64-user-test:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.22.0'
+      - name: Run deterministic tests
+        working-directory: bridge
+        run: npm test
+      - name: Validate launchers
+        run: bash -n release-templates/Start.command release-templates/Install.command scripts/configure-netease.sh scripts/runtime-env.sh
+      - name: Prepare bundled arm64 runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          NODE_VERSION=22.22.0
+          NCM_VERSION=0.1.6
+          STAGE="$PWD/.runtime-arm64"
+          mkdir -p "$STAGE/node/bin" "$STAGE/ncm" "$STAGE/downloads" "$STAGE/extract"
+          curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-darwin-arm64.tar.gz" -o "$STAGE/downloads/node.tar.gz"
+          tar -xzf "$STAGE/downloads/node.tar.gz" -C "$STAGE/extract" --strip-components=1
+          cp "$STAGE/extract/bin/node" "$STAGE/node/bin/node"
+          cp "$STAGE/extract/LICENSE" "$STAGE/node/LICENSE"
+          chmod +x "$STAGE/node/bin/node"
+          npm install --prefix "$STAGE/ncm" --omit=dev --ignore-scripts "@music163/ncm-cli@$NCM_VERSION"
+          test -x "$STAGE/ncm/node_modules/.bin/ncm-cli"
+          "$STAGE/node/bin/node" "$STAGE/ncm/node_modules/@music163/ncm-cli/dist/index.js" --version | grep -q "^${NCM_VERSION}$"
+      - name: Build exact user package
+        shell: bash
+        run: |
+          set -euo pipefail
+          export FROM_HERE_BUNDLED_NODE_ARM64_DIR="$PWD/.runtime-arm64/node"
+          export FROM_HERE_BUNDLED_NCM_ARM64_DIR="$PWD/.runtime-arm64/ncm"
+          export FROM_HERE_RELEASE_SUFFIX="v1.1.1-test-arm64"
+          ./scripts/build-release.sh dist
+          APP=$(find dist -maxdepth 1 -type d -name 'From-Here-v*-v1.1.1-test-arm64' | head -1)
+          source "$APP/.from-here/scripts/runtime-env.sh"
+          test "${FROM_HERE_BUNDLED_RUNTIME:-}" = "1"
+          test "$(ncm-cli --version)" = "0.1.6"
+          grep -q '检查网易云搜索能力' "$APP/Start.command"
+          grep -q '不会带着坏掉的召回继续启动' "$APP/Start.command"
+          bash -n "$APP/Start.command"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: from-here-v1.1.1-ncm016-arm64
+          path: dist/From-Here-v*-v1.1.1-test-arm64.zip
+          if-no-files-found: error

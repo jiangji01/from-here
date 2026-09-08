@@ -505,6 +505,7 @@ function normalizeAnalysis(raw,anchor){
     instrumentation_texture:arr(fp.instrumentation_texture || legacy.texture,8),
     melody_harmony:arr(fp.melody_harmony,8),
     narrative:arr(fp.narrative,8),
+    salience:fp.salience&&typeof fp.salience==='object'?fp.salience:{},
     must_preserve:arr(fp.must_preserve || legacy.invariants,6),
     can_drift:arr(fp.can_drift,8)
   };
@@ -713,12 +714,13 @@ function eligibleByFormat(track,analysis,stateWords='',excludes=''){
 function diversify(items,anchor,limit=Math.max(config.queueSize,6),radius=session.radius){
   const out=[]; const counts=new Map(); const albumCounts=new Map(); const seenTracks=new Set();
   const anchorArtist=String(anchor.artist||'').toLowerCase();
-  const delayedAnchor=[];
   function tryPush(t){
     const trackKey=t.encryptedId||keyFor(t); if(seenTracks.has(trackKey))return false;
     const artist=String(t.artist||'').toLowerCase();
     const isAnchorArtist=artist===anchorArtist;
-    const cap=isAnchorArtist?(Number(radius)<=18?2:1):1;
+    // Same artist is not inherently good or bad. Allow up to two specific tracks
+    // from the Anchor artist; musical identity and per-track judgment decide rank.
+    const cap=isAnchorArtist?2:1;
     if((counts.get(artist)||0)>=cap)return false;
     const album=String(t.album||'').trim().toLowerCase();
     const albumKey=album?`${artist}::${album}`:'';
@@ -728,15 +730,8 @@ function diversify(items,anchor,limit=Math.max(config.queueSize,6),radius=sessio
     return true;
   }
   for(const t of items){
-    const isAnchorArtist=String(t.artist||'').toLowerCase()===anchorArtist;
-    // At normal exploration distances, same-artist tracks are a safety net, not
-    // the product value. Do not let them occupy the first three positions.
-    if(Number(radius)>18&&isAnchorArtist&&out.length<3){delayedAnchor.push(t);continue;}
     tryPush(t);
     if(out.length>=limit)break;
-  }
-  if(out.length<limit){
-    for(const t of delayedAnchor){if(out.length>=limit)break;tryPush(t);}
   }
   return out;
 }
@@ -744,7 +739,7 @@ function localRank(pool,anchor,radius,stateWords,excludes,analysis,constraints={
   const neg=new Set(session.negativeArtists.map(x=>x.toLowerCase())); const pos=new Set(session.positiveArtists.map(x=>x.toLowerCase())); const profile=profileFor(anchor.artist);
   let items=pool.filter(t=>!neg.has(t.artist.toLowerCase())&&!exclusionHit(t,excludes)&&!localLanguageBlocked(t,constraints)&&eligibleByFormat(t,analysis,stateWords,excludes)&&!coarseWorldBreak(t,analysis,radius)).map((t,i)=>{
     const distance=profileDistance(t,anchor); let score=100-Math.max(0,distance-radius)*1.4-distance*.25;
-    if(pos.has(t.artist.toLowerCase()))score+=18; if(distance<=radius)score+=10; if(t.liked)score+=3; else if(t.recent)score+=1; if(t.source==='heartbeat')score+=6; if(t.source==='semantic-search')score+=12; if(t.source==='same-artist'&&radius<=18)score+=10; else if(t.source==='same-artist'&&radius>18)score-=8;
+    if(pos.has(t.artist.toLowerCase()))score+=18; if(distance<=radius)score+=10; if(t.liked)score+=3; else if(t.recent)score+=1; if(t.source==='heartbeat')score+=6; if(t.source==='semantic-search')score+=12;
     const text=`${(t.tags||[]).join(' ')} ${t.artist} ${t.album}`.toLowerCase(); for(const w of tokenize(stateWords)){if(w.length>1&&text.includes(w))score+=4;}
     score+=(i%5)*0.17;
     let reason='和起点仍有清楚的听感连续性'; if(t.source==='same-artist')reason='保留起点熟悉的声音与表达方式'; else if(t.source==='heartbeat')reason='情绪与听感仍能自然接在这一轮后面'; else if(t.source==='semantic-search')reason=t.semanticReason||'沿着起点的声音气质继续展开'; else if(t.source==='fm')reason='稍微走远一点，但核心气质仍然连着'; else if(t.source==='daily')reason='更意外的一步，仍保留这一轮的核心感受';

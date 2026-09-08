@@ -1,6 +1,6 @@
 {
   "name": "from-here-bridge",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "private": true,
   "description": "From Here — a session-aware music exploration layer that follows what you want right now.",
   "scripts": {
